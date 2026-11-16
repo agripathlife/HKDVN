@@ -1,0 +1,6 @@
+{
+  "name": "HKDVN",
+  "description": "Nền tảng khởi tạo và vận hành cửa hàng bán lẻ & F&B theo mô hình Client-Side First & BYOB (Google Drive, Sheets, Apps Script và GitHub Pages).",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
