@@ -229,6 +229,7 @@ export async function createShopSpreadsheet(
 export function generateAppsScriptCode(spreadsheetId: string): string {
   return `// HKDVN BYOB Backend - Tự động triển khai cho Google Sheets ID: ${spreadsheetId}
 const SHEET_ID = '${spreadsheetId}';
+const CACHE_KEY = 'hkdvn_live_orders_v1_' + SHEET_ID;
 
 function safeParseItems(raw) {
   try {
@@ -239,10 +240,7 @@ function safeParseItems(raw) {
   }
 }
 
-function doGet(e) {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
-  const since = (e && e.parameter && e.parameter.since) || '';
-  const sheet = ss.getSheetByName('DonHienTai');
+function buildOrdersFromSheet(sheet) {
   const rows = sheet ? sheet.getDataRange().getValues() : [];
   const orders = [];
   let latestUpdate = '';
@@ -251,20 +249,53 @@ function doGet(e) {
     if (!r[0]) continue;
     const updatedAt = String(r[4] || '');
     if (updatedAt > latestUpdate) latestUpdate = updatedAt;
-    const lastOrderId = String(r[3] || '');
     orders.push({
       tableNumber: Number(r[0]),
       status: String(r[1] || 'occupied'),
       totalAmount: Number(r[2] || 0),
-      lastOrderId: lastOrderId,
+      lastOrderId: String(r[3] || ''),
       updatedAt: updatedAt,
       items: safeParseItems(r[5])
     });
   }
-  if (since && latestUpdate && since === latestUpdate) {
-    return jsonOut({ unchanged: true, updatedAt: latestUpdate });
+  return { updatedAt: latestUpdate, orders: orders };
+}
+
+function syncLiveCache(ss) {
+  const sheet = ss.getSheetByName('DonHienTai');
+  const payload = buildOrdersFromSheet(sheet);
+  try {
+    const json = JSON.stringify(payload);
+    if (json.length < 95000) {
+      CacheService.getScriptCache().put(CACHE_KEY, json, 21600);
+    }
+  } catch (err) {}
+  return payload;
+}
+
+function doGet(e) {
+  const since = (e && e.parameter && e.parameter.since) || '';
+  const cache = CacheService.getScriptCache();
+  let payload = null;
+  try {
+    const cached = cache.get(CACHE_KEY);
+    if (cached) payload = JSON.parse(cached);
+  } catch (err) {
+    payload = null;
   }
-  return jsonOut({ unchanged: false, updatedAt: latestUpdate, orders: orders });
+
+  if (!payload) {
+    const ss = SpreadsheetApp.openById(SHEET_ID);
+    payload = syncLiveCache(ss);
+  }
+
+  if (since && payload.updatedAt && since === payload.updatedAt) {
+    return jsonOut({ unchanged: true, updatedAt: payload.updatedAt });
+  }
+  if (since && !payload.updatedAt && since === '__EMPTY__') {
+    return jsonOut({ unchanged: true, updatedAt: '' });
+  }
+  return jsonOut({ unchanged: false, updatedAt: payload.updatedAt || '', orders: payload.orders || [] });
 }
 
 function doPost(e) {
@@ -304,6 +335,7 @@ function doPost(e) {
 
       if (body.action === 'ackSupport' && (!nextItems || nextItems.length === 0)) {
         if (rowIndex > 0) sheet.deleteRow(rowIndex);
+        syncLiveCache(ss);
         return jsonOut({ ok: true, updatedAt: now });
       }
 
@@ -330,6 +362,7 @@ function doPost(e) {
       } else {
         sheet.appendRow(rowData);
       }
+      syncLiveCache(ss);
       return jsonOut({ ok: true, updatedAt: now });
     }
 
@@ -353,6 +386,7 @@ function doPost(e) {
             liveSheet.deleteRow(i + 1);
           }
         }
+        syncLiveCache(ss);
       }
       return jsonOut({ ok: true });
     }

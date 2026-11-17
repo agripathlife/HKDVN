@@ -201,10 +201,10 @@ export const PortalView: React.FC<PortalViewProps> = ({
         <div className="bg-white border border-slate-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
             <ShoppingBag className="w-4 h-4 text-[#0F766E] shrink-0" />
-            <span>2. Danh mục &amp; Ảnh WebP</span>
+            <span>2. Quản trị SP tại trang Quản lý</span>
           </div>
           <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
-            Đóng gói sẵn `products.json` &amp; `/assets/img/*.webp` tải siêu nhanh trên điện thoại.
+            Đóng gói sẵn sản phẩm mẫu &amp; ảnh WebP; sau khi xuất bản, thêm/sửa/quét mã SKU sản phẩm ngay trong tab Sản phẩm của `admin.html`.
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">

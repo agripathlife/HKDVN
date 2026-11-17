@@ -10,16 +10,15 @@ interface TopBarProps {
 export const TopBar: React.FC<TopBarProps> = ({ activeTab, model, onNavigate }) => {
   const navItems: Array<{ tab: AppTab; label: string }> = [
     { tab: AppTab.PORTAL, label: 'Cổng khởi tạo' },
-    { tab: AppTab.STOREFRONT, label: 'Cửa hàng' },
+    { tab: AppTab.STOREFRONT, label: 'Xem thử Cửa hàng' },
     {
       tab: AppTab.OPERATIONS,
-      label: model === BusinessModel.RETAIL ? 'POS Tính tiền' : 'Bếp & Thu ngân',
+      label: model === BusinessModel.RETAIL ? 'Xem thử POS' : 'Xem thử Bếp & Bàn',
     },
-    { tab: AppTab.ADMIN, label: 'Quản trị SP' },
   ];
 
   const primaryActionLabel =
-    activeTab === AppTab.PORTAL ? 'Mở Cửa hàng' : 'Thiết lập BYOB';
+    activeTab === AppTab.PORTAL ? 'Xem thử Cửa hàng' : 'Về Cổng khởi tạo';
   const primaryActionTarget =
     activeTab === AppTab.PORTAL ? AppTab.STOREFRONT : AppTab.PORTAL;
 

@@ -19,11 +19,9 @@ import {
   clearTableOrder,
   DEFAULT_CONFIG,
   loadGitHubToken,
-  loadInvoices,
   loadProducts,
   loadShopConfig,
   loadTableOrders,
-  removeProduct,
   saveGitHubToken,
   saveInvoice,
   saveProduct,
@@ -36,7 +34,6 @@ import { TopBar } from './components/TopBar';
 import { PortalView } from './components/PortalView';
 import { StorefrontView } from './components/StorefrontView';
 import { OperationsView } from './components/OperationsView';
-import { AdminCatalogView } from './components/AdminCatalogView';
 
 function parseTableFromUrl(): number | null {
   try {
@@ -61,7 +58,6 @@ export default function App() {
 
   const [config, setConfig] = useState<ShopConfig>(DEFAULT_CONFIG);
   const [products, setProducts] = useState<ProductItem[]>([]);
-  const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [tableOrders, setTableOrders] = useState<TableOrder[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -69,10 +65,9 @@ export default function App() {
   const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
 
   const refreshAll = useCallback(async () => {
-    const [cfg, prods, invs, tables] = await Promise.all([
+    const [cfg, prods, tables] = await Promise.all([
       loadShopConfig(),
       loadProducts(),
-      loadInvoices(),
       loadTableOrders(),
     ]);
     if (initialBan && cfg.model !== BusinessModel.FNB) {
@@ -83,7 +78,6 @@ export default function App() {
       setConfig(cfg);
     }
     setProducts(prods);
-    setInvoices(invs);
     setTableOrders(tables);
     setLoaded(true);
   }, [initialBan]);
@@ -122,19 +116,8 @@ export default function App() {
     setConfig(next);
   };
 
-  const handleSaveProduct = async (product: ProductItem) => {
-    await saveProduct(product);
-    setProducts(await loadProducts());
-  };
-
-  const handleDeleteProduct = async (id: string) => {
-    await removeProduct(id);
-    setProducts(await loadProducts());
-  };
-
   const handleSaveInvoice = async (invoice: InvoiceRecord) => {
     await saveInvoice(invoice);
-    setInvoices(await loadInvoices());
   };
 
   const handleUpdateProductStock = async (soldItems: CartItem[]) => {
@@ -233,19 +216,6 @@ export default function App() {
             onSaveTableOrder={handleSaveTableOrder}
             onClearTableOrder={handleClearTableOrder}
             onOpenTablePreview={handleOpenTablePreview}
-          />
-        )}
-
-        {activeTab === AppTab.ADMIN && (
-          <AdminCatalogView
-            config={config}
-            products={products}
-            invoices={invoices}
-            githubToken={githubToken}
-            githubUser={githubUser}
-            onSaveProduct={handleSaveProduct}
-            onDeleteProduct={handleDeleteProduct}
-            onMarkInvoiceSynced={handleSaveInvoice}
           />
         )}
       </main>
