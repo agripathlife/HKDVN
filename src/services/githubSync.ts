@@ -194,6 +194,15 @@ export async function provisionGitHubStorefront(
     'Khởi tạo giao diện cửa hàng GitHub Pages'
   );
 
+  await putRepoFileBase64(
+    token,
+    owner,
+    cleanRepo,
+    '.nojekyll',
+    toBase64Utf8(''),
+    'Bỏ qua Jekyll trên GitHub Pages'
+  );
+
   try {
     await ghFetch(`/repos/${owner}/${cleanRepo}/pages`, token, {
       method: 'POST',

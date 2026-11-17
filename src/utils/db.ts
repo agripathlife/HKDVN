@@ -9,6 +9,13 @@ import {
   TableStatus,
 } from '../types';
 
+import heroImg from '../assets/images/hero_hkdvn_store_1794842003940.jpg';
+import coffeeImg from '../assets/images/retail_ca_phe_sua_1794842004343.jpg';
+import oolongImg from '../assets/images/retail_tra_o_long_1794842004254.jpg';
+import phoImg from '../assets/images/fnb_pho_bo_1794842004947.jpg';
+import banhMiImg from '../assets/images/fnb_banh_mi_1794842005808.jpg';
+import peachTeaImg from '../assets/images/fnb_tra_dao_cam_sa_1794842005902.jpg';
+
 const DB_NAME = 'hkdvn_byob_db';
 const DB_VERSION = 1;
 const STORE_KV = 'kv';
@@ -16,7 +23,8 @@ const STORE_PRODUCTS = 'products';
 const STORE_INVOICES = 'invoices';
 const STORE_TABLES = 'tableOrders';
 
-export const HERO_IMAGE_PATH = '/src/assets/images/hero_hkdvn_store_1794842003940.jpg';
+export const HERO_IMAGE_PATH = heroImg;
+export const DEFAULT_PRODUCT_IMAGE = coffeeImg;
 
 export const DEFAULT_CONFIG: ShopConfig = {
   shopName: 'Quán & Tạp Hóa Minh Tâm',
@@ -45,7 +53,7 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
     unit: 'Chai',
     stock: 48,
     status: ProductStatus.IN_STOCK,
-    imageUrl: '/src/assets/images/retail_ca_phe_sua_1794842004343.jpg',
+    imageUrl: coffeeImg,
     description: 'Cà phê Robusta rang mộc pha phin truyền thống kết hợp sữa đặc, đóng chai thủy tinh tiện mang đi.',
     model: BusinessModel.RETAIL,
     updatedAt: new Date().toISOString(),
@@ -60,7 +68,7 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
     unit: 'Chai',
     stock: 36,
     status: ProductStatus.IN_STOCK,
-    imageUrl: '/src/assets/images/retail_tra_o_long_1794842004254.jpg',
+    imageUrl: oolongImg,
     description: 'Lá trà Ô Long thu hái tại cao nguyên Mộc Châu, ủ lạnh 12 giờ giữ trọn hương thơm thanh mát.',
     model: BusinessModel.RETAIL,
     updatedAt: new Date().toISOString(),
@@ -75,7 +83,7 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
     unit: 'Túi',
     stock: 22,
     status: ProductStatus.IN_STOCK,
-    imageUrl: '/src/assets/images/retail_ca_phe_sua_1794842004343.jpg',
+    imageUrl: coffeeImg,
     description: 'Hạt Arabica Cầu Đất & Robusta Đắk Lắk phối trộn tỷ lệ 30/70, phù hợp pha phin và Espresso.',
     model: BusinessModel.RETAIL,
     updatedAt: new Date().toISOString(),
@@ -90,7 +98,7 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
     unit: 'Ổ',
     stock: 25,
     status: ProductStatus.IN_STOCK,
-    imageUrl: '/src/assets/images/fnb_banh_mi_1794842005808.jpg',
+    imageUrl: banhMiImg,
     description: 'Bánh mì nóng giòn kẹp thịt nướng mật ong, đồ chua và rau mùi, gói giấy kraft mang đi.',
     model: BusinessModel.RETAIL,
     updatedAt: new Date().toISOString(),
@@ -105,7 +113,7 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
     unit: 'Tô',
     stock: 50,
     status: ProductStatus.IN_STOCK,
-    imageUrl: '/src/assets/images/fnb_pho_bo_1794842004947.jpg',
+    imageUrl: phoImg,
     description: 'Nước dùng ninh xương bò 12 giờ cùng thảo quả, quế hồi. Kèm thịt tái mềm và rau thơm tươi.',
     model: BusinessModel.FNB,
     updatedAt: new Date().toISOString(),
@@ -120,7 +128,7 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
     unit: 'Phần',
     stock: 40,
     status: ProductStatus.IN_STOCK,
-    imageUrl: '/src/assets/images/fnb_banh_mi_1794842005808.jpg',
+    imageUrl: banhMiImg,
     description: 'Thịt heo ướp sả nướng than hoa, pate nhà làm, đồ chua giòn và ớt tươi.',
     model: BusinessModel.FNB,
     updatedAt: new Date().toISOString(),
@@ -135,7 +143,7 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
     unit: 'Ly',
     stock: 80,
     status: ProductStatus.IN_STOCK,
-    imageUrl: '/src/assets/images/fnb_tra_dao_cam_sa_1794842005902.jpg',
+    imageUrl: peachTeaImg,
     description: 'Trà đen ủ đậm kết hợp sả đập dập, cam vàng tươi và miếng đào giòn thanh mát.',
     model: BusinessModel.FNB,
     updatedAt: new Date().toISOString(),
@@ -150,7 +158,7 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
     unit: 'Ly',
     stock: 100,
     status: ProductStatus.IN_STOCK,
-    imageUrl: '/src/assets/images/retail_ca_phe_sua_1794842004343.jpg',
+    imageUrl: coffeeImg,
     description: 'Cà phê phin đậm đà đánh cùng sữa đặc có đường và đá viên tinh khiết.',
     model: BusinessModel.FNB,
     updatedAt: new Date().toISOString(),

@@ -17,6 +17,7 @@ import {
   ShopConfig,
 } from '../types';
 import { formatTimeVN, formatVND } from '../utils/vietnamese';
+import { DEFAULT_PRODUCT_IMAGE } from '../utils/db';
 import { processProductImageToWebP } from '../utils/imageProcessor';
 import {
   appendInvoiceToSheet,
@@ -189,7 +190,7 @@ export const AdminCatalogView: React.FC<AdminCatalogViewProps> = ({
       unit: unit.trim() || 'Phần',
       stock: Number(stock) || 0,
       status,
-      imageUrl: processedImg?.dataUrl || existingImageUrl || '/src/assets/images/retail_ca_phe_sua_1794842004343.jpg',
+      imageUrl: processedImg?.dataUrl || existingImageUrl || DEFAULT_PRODUCT_IMAGE,
       imageWebpBase64: processedImg?.base64,
       description: description.trim(),
       model,
