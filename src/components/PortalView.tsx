@@ -32,6 +32,7 @@ import {
 import {
   GitHubUser,
   provisionGitHubStorefront,
+  updateTenantConfigOnGitHub,
   verifyGitHubToken,
 } from '../services/githubSync';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -285,6 +286,14 @@ export const PortalView: React.FC<PortalViewProps> = ({
         setDraft(updatedConfig);
         setManualGasInput(gasRes.webAppUrl);
         await onUpdateConfig(updatedConfig);
+        if (githubToken && nextInfra.githubOwner && nextInfra.githubRepo) {
+          await updateTenantConfigOnGitHub(
+            githubToken,
+            nextInfra.githubOwner,
+            nextInfra.githubRepo,
+            updatedConfig
+          ).catch(() => {});
+        }
         updateStep('gas', {
           status: 'done',
           detail: `Đã triển khai thành công đường dẫn API: ${gasRes.webAppUrl}`,
@@ -315,6 +324,14 @@ export const PortalView: React.FC<PortalViewProps> = ({
     };
     setDraft(updated);
     await onUpdateConfig(updated);
+    if (githubToken && updated.infra.githubOwner && updated.infra.githubRepo) {
+      await updateTenantConfigOnGitHub(
+        githubToken,
+        updated.infra.githubOwner,
+        updated.infra.githubRepo,
+        updated
+      ).catch(() => {});
+    }
     if (cleanUrl) {
       updateStep('gas', {
         status: 'done',
@@ -958,6 +975,39 @@ export const PortalView: React.FC<PortalViewProps> = ({
         </div>
 
         {/* Liên kết đã tạo & ô nhập đường dẫn Apps Script */}
+        {draft.infra.githubPagesUrl && (
+          <div className="p-5 bg-teal-50/70 border border-[#0F766E]/30 rounded-2xl flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-bold text-slate-900">
+                Gian hàng mới đã sẵn sàng &amp; hoạt động độc lập khỏi Cổng khởi tạo
+              </p>
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                Từ bây giờ, chủ quán vận hành trực tiếp trên trang quản lý của gian hàng mới (lần đầu GitHub Pages cần 30–60 giây để xuất bản). Toàn bộ ảnh sản phẩm đã được tải vào thư mục <span className="font-mono">/assets/img/</span> của kho lưu trữ riêng.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <a
+                href={`${draft.infra.githubPagesUrl}admin.html`}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2.5 min-h-[42px] bg-[#0F766E] hover:bg-[#0D655E] text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Mở Trang Quản lý Cửa hàng (admin.html)</span>
+              </a>
+              <a
+                href={draft.infra.githubPagesUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2.5 min-h-[42px] bg-white border border-slate-200 hover:bg-slate-50 text-slate-900 text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-[#0F766E]" />
+                <span>Mở Trang Khách hàng</span>
+              </a>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2 text-sm">
             <p className="font-semibold text-slate-900">Liên kết hạ tầng đã tạo</p>
@@ -978,13 +1028,13 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
               {draft.infra.githubPagesUrl ? (
                 <a
-                  href={draft.infra.githubPagesUrl}
+                  href={`${draft.infra.githubPagesUrl}admin.html`}
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center gap-1.5 text-[#0F766E] hover:underline font-medium"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  Mở trang cửa hàng GitHub Pages: {draft.infra.githubPagesUrl}
+                  Mở trang quản lý mới: {draft.infra.githubPagesUrl}admin.html
                 </a>
               ) : (
                 <p className="text-slate-500">GitHub Pages: chưa xuất bản</p>

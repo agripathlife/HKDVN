@@ -1,4 +1,8 @@
 import { ProductItem, ShopConfig } from '../types';
+import {
+  buildTenantAdminHTML,
+  buildTenantStorefrontHTML,
+} from './tenantTemplates';
 
 export interface GitHubUser {
   login: string;
@@ -81,52 +85,40 @@ export async function putRepoFileBase64(
   });
 }
 
-function buildStandaloneStorefrontHTML(config: ShopConfig): string {
-  return `<!doctype html>
-<html lang="vi">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${config.shopName} — Đặt hàng trực tuyến</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-slate-50 text-slate-900 min-h-screen">
-  <div id="app" class="max-w-5xl mx-auto p-4 md:p-8">
-    <header class="flex items-center justify-between border-b border-slate-200 pb-4 mb-6">
-      <div>
-        <h1 class="text-2xl font-bold">${config.shopName}</h1>
-        <p class="text-sm text-slate-500">${config.address} · ${config.phone}</p>
-      </div>
-      <span id="table-badge" class="text-sm font-semibold text-teal-700"></span>
-    </header>
-    <div id="grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
-  </div>
-  <script>
-    (async function() {
-      const params = new URLSearchParams(location.search);
-      const ban = params.get('ban');
-      if (ban) document.getElementById('table-badge').textContent = 'Bàn số ' + ban;
-      const [cfg, prods] = await Promise.all([
-        fetch('./config.json').then(r => r.json()),
-        fetch('./products.json').then(r => r.json())
-      ]);
-      const grid = document.getElementById('grid');
-      grid.innerHTML = prods.map(p => \`
-        <div class="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div class="aspect-square bg-slate-100 flex items-center justify-center overflow-hidden">
-            <img src="\${p.imageUrl}" alt="\${p.name}" class="w-full h-full object-cover" />
-          </div>
-          <div class="p-4">
-            <p class="text-xs text-slate-500">\${p.category}</p>
-            <h2 class="font-semibold text-base mt-1">\${p.name}</h2>
-            <p class="text-teal-700 font-bold mt-2">\${new Intl.NumberFormat('vi-VN').format(p.price)}đ / \${p.unit}</p>
-          </div>
-        </div>
-      \`).join('');
-    })();
-  </script>
-</body>
-</html>`;
+async function imageUrlToWebpBase64(imageUrl: string): Promise<string | null> {
+  if (!imageUrl) return null;
+  if (imageUrl.startsWith('data:image/')) {
+    const parts = imageUrl.split(',');
+    return parts[1] || null;
+  }
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.crossOrigin = 'anonymous';
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Không tải được ảnh nguồn'));
+      el.src = imageUrl;
+    });
+    const minSide = Math.min(img.width, img.height);
+    const sx = Math.floor((img.width - minSide) / 2);
+    const sy = Math.floor((img.height - minSide) / 2);
+    const targetSide = Math.min(minSide, 800);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetSide;
+    canvas.height = targetSide;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, targetSide, targetSide);
+
+    let dataUrl = canvas.toDataURL('image/webp', 0.8);
+    if (!dataUrl.startsWith('data:image/webp')) {
+      dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    }
+    return dataUrl.split(',')[1] || null;
+  } catch {
+    return null;
+  }
 }
 
 export async function provisionGitHubStorefront(
@@ -134,7 +126,7 @@ export async function provisionGitHubStorefront(
   repoName: string,
   config: ShopConfig,
   products: ProductItem[]
-): Promise<{ owner: string; repo: string; pagesUrl: string }> {
+): Promise<{ owner: string; repo: string; pagesUrl: string; adminUrl: string }> {
   const user = await verifyGitHubToken(token);
   const owner = user.login;
   const cleanRepo = repoName.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-') || 'hkdvn-shop';
@@ -157,30 +149,71 @@ export async function provisionGitHubStorefront(
         auto_init: true,
       }),
     });
-    // Allow GitHub to initialize default branch
     await new Promise((r) => setTimeout(r, 1400));
   }
 
-  const sanitizedProducts = products.map((p) => ({
-    id: p.id,
-    sku: p.sku,
-    name: p.name,
-    price: p.price,
-    category: p.category,
-    unit: p.unit,
-    stock: p.stock,
-    status: p.status,
-    imageUrl: p.imageUrl,
-    description: p.description,
-    model: p.model,
-  }));
+  // Convert and upload every product image into assets/img/<sku>.webp inside the new repo
+  const convertedCache = new Map<string, string>();
+  const sanitizedProducts = [];
+
+  for (const p of products) {
+    const safeSku = (p.sku || p.id).replace(/[^a-zA-Z0-9_-]/g, '') || p.id;
+    let finalRelativeUrl = p.imageUrl;
+
+    let base64Img = p.imageWebpBase64 || convertedCache.get(p.imageUrl) || null;
+    if (!base64Img) {
+      base64Img = await imageUrlToWebpBase64(p.imageUrl);
+      if (base64Img) {
+        convertedCache.set(p.imageUrl, base64Img);
+      }
+    }
+
+    if (base64Img) {
+      const repoImgPath = `assets/img/${safeSku}.webp`;
+      await putRepoFileBase64(
+        token,
+        owner,
+        cleanRepo,
+        repoImgPath,
+        base64Img,
+        `Thêm ảnh WebP cho ${p.name}`
+      );
+      finalRelativeUrl = `./${repoImgPath}`;
+    }
+
+    sanitizedProducts.push({
+      id: p.id,
+      sku: p.sku,
+      name: p.name,
+      price: p.price,
+      costPrice: p.costPrice,
+      category: p.category,
+      unit: p.unit,
+      stock: p.stock,
+      status: p.status,
+      imageUrl: finalRelativeUrl,
+      description: p.description,
+      model: p.model,
+    });
+  }
+
+  const pagesUrl = `https://${owner}.github.io/${cleanRepo}/`;
+  const configForTenant: ShopConfig = {
+    ...config,
+    infra: {
+      ...config.infra,
+      githubOwner: owner,
+      githubRepo: cleanRepo,
+      githubPagesUrl: pagesUrl,
+    },
+  };
 
   await putRepoFileBase64(
     token,
     owner,
     cleanRepo,
     'config.json',
-    toBase64Utf8(JSON.stringify(config, null, 2)),
+    toBase64Utf8(JSON.stringify(configForTenant, null, 2)),
     'Cập nhật cấu hình cửa hàng HKDVN'
   );
 
@@ -198,8 +231,17 @@ export async function provisionGitHubStorefront(
     owner,
     cleanRepo,
     'index.html',
-    toBase64Utf8(buildStandaloneStorefrontHTML(config)),
-    'Khởi tạo giao diện cửa hàng GitHub Pages'
+    toBase64Utf8(buildTenantStorefrontHTML(configForTenant)),
+    'Khởi tạo giao diện khách hàng độc lập'
+  );
+
+  await putRepoFileBase64(
+    token,
+    owner,
+    cleanRepo,
+    'admin.html',
+    toBase64Utf8(buildTenantAdminHTML(configForTenant)),
+    'Khởi tạo trang quản trị độc lập của chủ quán'
   );
 
   await putRepoFileBase64(
@@ -225,7 +267,8 @@ export async function provisionGitHubStorefront(
   return {
     owner,
     repo: cleanRepo,
-    pagesUrl: `https://${owner}.github.io/${cleanRepo}/`,
+    pagesUrl,
+    adminUrl: `${pagesUrl}admin.html`,
   };
 }
 
@@ -237,7 +280,12 @@ export async function publishProductToGitHub(
   allProducts: ProductItem[]
 ): Promise<{ imagePath?: string }> {
   let imagePath: string | undefined;
-  if (product.imageWebpBase64) {
+  let base64Img = product.imageWebpBase64 || null;
+  if (!base64Img && product.imageUrl && !product.imageUrl.startsWith('./assets/img/')) {
+    base64Img = await imageUrlToWebpBase64(product.imageUrl);
+  }
+
+  if (base64Img) {
     const safeSku = (product.sku || product.id).replace(/[^a-zA-Z0-9_-]/g, '');
     imagePath = `assets/img/${safeSku}.webp`;
     await putRepoFileBase64(
@@ -245,25 +293,34 @@ export async function publishProductToGitHub(
       owner,
       repo,
       imagePath,
-      product.imageWebpBase64,
+      base64Img,
       `Tải ảnh WebP sản phẩm ${product.name}`
     );
   }
 
-  const cleanList = allProducts.map((p) => ({
-    id: p.id,
-    sku: p.sku,
-    name: p.name,
-    price: p.price,
-    category: p.category,
-    unit: p.unit,
-    stock: p.stock,
-    status: p.status,
-    imageUrl: p.id === product.id && imagePath ? `./${imagePath}` : p.imageUrl,
-    description: p.description,
-    model: p.model,
-    updatedAt: p.updatedAt,
-  }));
+  const cleanList = allProducts.map((p) => {
+    const safeSku = (p.sku || p.id).replace(/[^a-zA-Z0-9_-]/g, '');
+    return {
+      id: p.id,
+      sku: p.sku,
+      name: p.name,
+      price: p.price,
+      costPrice: p.costPrice,
+      category: p.category,
+      unit: p.unit,
+      stock: p.stock,
+      status: p.status,
+      imageUrl:
+        p.id === product.id && imagePath
+          ? `./${imagePath}`
+          : p.imageUrl.startsWith('./')
+            ? p.imageUrl
+            : `./assets/img/${safeSku}.webp`,
+      description: p.description,
+      model: p.model,
+      updatedAt: p.updatedAt,
+    };
+  });
 
   await putRepoFileBase64(
     token,
@@ -276,3 +333,20 @@ export async function publishProductToGitHub(
 
   return { imagePath };
 }
+
+export async function updateTenantConfigOnGitHub(
+  token: string,
+  owner: string,
+  repo: string,
+  config: ShopConfig
+): Promise<void> {
+  await putRepoFileBase64(
+    token,
+    owner,
+    repo,
+    'config.json',
+    toBase64Utf8(JSON.stringify(config, null, 2)),
+    'Cập nhật đường dẫn API và cấu hình cửa hàng'
+  );
+}
+
