@@ -240,6 +240,14 @@ function safeParseItems(raw) {
   }
 }
 
+function parseRawPayload(raw) {
+  try {
+    return JSON.parse(raw || '[]');
+  } catch (err) {
+    return [];
+  }
+}
+
 function buildOrdersFromSheet(sheet) {
   const rows = sheet ? sheet.getDataRange().getValues() : [];
   const orders = [];
@@ -249,14 +257,35 @@ function buildOrdersFromSheet(sheet) {
     if (!r[0]) continue;
     const updatedAt = String(r[4] || '');
     if (updatedAt > latestUpdate) latestUpdate = updatedAt;
-    orders.push({
-      tableNumber: Number(r[0]),
-      status: String(r[1] || 'occupied'),
-      totalAmount: Number(r[2] || 0),
-      lastOrderId: String(r[3] || ''),
-      updatedAt: updatedAt,
-      items: safeParseItems(r[5])
-    });
+    const parsed = parseRawPayload(r[5]);
+    const isRetail = String(r[1]) === 'retail_pending' || (parsed && !Array.isArray(parsed) && parsed._retailOrder);
+    if (isRetail) {
+      orders.push({
+        orderKey: String(r[0]),
+        orderType: 'retail_pickup',
+        tableNumber: 0,
+        status: String(r[1] || 'retail_pending'),
+        totalAmount: Number(r[2] || 0),
+        lastOrderId: String(r[3] || r[0]),
+        updatedAt: updatedAt,
+        customerName: (parsed && parsed.customerName) || '',
+        customerPhone: (parsed && parsed.customerPhone) || '',
+        pickupTime: (parsed && parsed.pickupTime) || '',
+        note: (parsed && parsed.note) || '',
+        items: (parsed && Array.isArray(parsed.items)) ? parsed.items : []
+      });
+    } else {
+      orders.push({
+        orderKey: String(r[0]),
+        orderType: 'fnb_table',
+        tableNumber: Number(r[0]),
+        status: String(r[1] || 'occupied'),
+        totalAmount: Number(r[2] || 0),
+        lastOrderId: String(r[3] || ''),
+        updatedAt: updatedAt,
+        items: Array.isArray(parsed) ? parsed : []
+      });
+    }
   }
   return { updatedAt: latestUpdate, orders: orders };
 }
@@ -367,6 +396,106 @@ function doPost(e) {
       return jsonOut({ ok: true, updatedAt: now });
     }
 
+    if (body.action === 'placeRetailOrder') {
+      const sheet = ss.getSheetByName('DonHienTai');
+      const orderId = String(body.orderId || ('DH-' + Date.now().toString().slice(-6)));
+      const payloadJson = JSON.stringify({
+        _retailOrder: true,
+        orderId: orderId,
+        customerName: String(body.customerName || ''),
+        customerPhone: String(body.customerPhone || ''),
+        pickupTime: String(body.pickupTime || ''),
+        note: String(body.note || ''),
+        items: Array.isArray(body.items) ? body.items : []
+      });
+      sheet.appendRow([
+        orderId,
+        'retail_pending',
+        Number(body.totalAmount || 0),
+        orderId,
+        now,
+        payloadJson
+      ]);
+      syncLiveCache(ss);
+      return jsonOut({ ok: true, orderId: orderId, updatedAt: now });
+    }
+
+    if (body.action === 'transferTable') {
+      const fromTbl = Number(body.fromTable);
+      const toTbl = Number(body.toTable);
+      if (!fromTbl || !toTbl || fromTbl === toTbl) {
+        return jsonOut({ ok: false, error: 'Số bàn chuyển không hợp lệ' });
+      }
+      const sheet = ss.getSheetByName('DonHienTai');
+      const rows = sheet.getDataRange().getValues();
+      let fromRowIndex = -1;
+      let toRowIndex = -1;
+      let fromRow = null;
+      let toRow = null;
+      for (let i = 1; i < rows.length; i++) {
+        const keyNum = Number(rows[i][0]);
+        if (keyNum === fromTbl) {
+          fromRowIndex = i + 1;
+          fromRow = rows[i];
+        } else if (keyNum === toTbl) {
+          toRowIndex = i + 1;
+          toRow = rows[i];
+        }
+      }
+      if (!fromRow) {
+        return jsonOut({ ok: false, error: 'Bàn nguồn đang trống' });
+      }
+      if (toRow) {
+        const fromItems = safeParseItems(fromRow[5]);
+        const merged = safeParseItems(toRow[5]).slice();
+        fromItems.forEach(function (incoming) {
+          const matchIdx = merged.findIndex(function (x) {
+            return x.productId === incoming.productId && (x.note || '') === (incoming.note || '');
+          });
+          if (matchIdx >= 0) {
+            merged[matchIdx].qty = (Number(merged[matchIdx].qty) || 0) + (Number(incoming.qty) || 0);
+          } else {
+            merged.push(incoming);
+          }
+        });
+        const mergedTotal = merged.reduce(function (s, it) {
+          return s + (Number(it.price) || 0) * (Number(it.qty) || 1);
+        }, 0);
+        const mergedStatus =
+          String(toRow[1]) === 'payment_requested' || String(fromRow[1]) === 'payment_requested'
+            ? 'payment_requested'
+            : String(toRow[1]) === 'support_requested' || String(fromRow[1]) === 'support_requested'
+              ? 'support_requested'
+              : 'occupied';
+        sheet.getRange(toRowIndex, 1, 1, 6).setValues([[
+          toTbl,
+          mergedStatus,
+          mergedTotal,
+          toRow[3] || fromRow[3] || '',
+          now,
+          JSON.stringify(merged)
+        ]]);
+        sheet.deleteRow(fromRowIndex);
+      } else {
+        sheet.getRange(fromRowIndex, 1).setValue(toTbl);
+        sheet.getRange(fromRowIndex, 5).setValue(now);
+      }
+      syncLiveCache(ss);
+      return jsonOut({ ok: true, updatedAt: now });
+    }
+
+    if (body.action === 'dismissRetailOrder' && body.clearOrderKey) {
+      const liveSheet = ss.getSheetByName('DonHienTai');
+      const rows = liveSheet.getDataRange().getValues();
+      for (let i = rows.length - 1; i >= 1; i--) {
+        if (String(rows[i][0]) === String(body.clearOrderKey)) {
+          liveSheet.deleteRow(i + 1);
+        }
+      }
+      syncLiveCache(ss);
+      return jsonOut({ ok: true, updatedAt: now });
+    }
+
     if (body.action === 'recordInvoice') {
       const revSheet = ss.getSheetByName('DoanhThu');
       const detailSheet = ss.getSheetByName('ChiTietDonHang');
@@ -379,11 +508,14 @@ function doPost(e) {
       (inv.items || []).forEach(function(item) {
         detailSheet.appendRow([inv.id, inv.createdAt, item.sku, item.name, item.qty, item.price, item.note || '']);
       });
-      if (body.clearTableNumber) {
+      if (body.clearTableNumber || body.clearOrderKey) {
         const liveSheet = ss.getSheetByName('DonHienTai');
         const rows = liveSheet.getDataRange().getValues();
         for (let i = rows.length - 1; i >= 1; i--) {
-          if (Number(rows[i][0]) === Number(body.clearTableNumber)) {
+          if (
+            (body.clearTableNumber && Number(rows[i][0]) === Number(body.clearTableNumber)) ||
+            (body.clearOrderKey && String(rows[i][0]) === String(body.clearOrderKey))
+          ) {
             liveSheet.deleteRow(i + 1);
           }
         }
@@ -581,7 +713,7 @@ export async function syncCatalogToSheet(
 
 export async function postOrderToGas(
   gasUrl: string,
-  action: 'placeOrder' | 'requestPayment' | 'recordInvoice',
+  action: 'placeOrder' | 'requestPayment' | 'recordInvoice' | 'placeRetailOrder' | 'transferTable' | 'dismissRetailOrder',
   payload: Record<string, unknown>
 ): Promise<void> {
   await fetch(gasUrl, {

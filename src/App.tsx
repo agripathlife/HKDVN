@@ -11,8 +11,10 @@ import {
   InvoiceRecord,
   ProductItem,
   ProductStatus,
+  RetailPickupOrder,
   ShopConfig,
   TableOrder,
+  TableStatus,
 } from './types';
 import {
   clearGitHubToken,
@@ -20,11 +22,14 @@ import {
   DEFAULT_CONFIG,
   loadGitHubToken,
   loadProducts,
+  loadRetailOrders,
   loadShopConfig,
   loadTableOrders,
+  removeRetailOrder,
   saveGitHubToken,
   saveInvoice,
   saveProduct,
+  saveRetailOrder,
   saveShopConfig,
   saveTableOrder,
   subscribeSyncChannel,
@@ -59,16 +64,18 @@ export default function App() {
   const [config, setConfig] = useState<ShopConfig>(DEFAULT_CONFIG);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [tableOrders, setTableOrders] = useState<TableOrder[]>([]);
+  const [retailOrders, setRetailOrders] = useState<RetailPickupOrder[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const [githubToken, setGithubToken] = useState<string>('');
   const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
 
   const refreshAll = useCallback(async () => {
-    const [cfg, prods, tables] = await Promise.all([
+    const [cfg, prods, tables, retails] = await Promise.all([
       loadShopConfig(),
       loadProducts(),
       loadTableOrders(),
+      loadRetailOrders(),
     ]);
     if (initialBan && cfg.model !== BusinessModel.FNB) {
       const fnbCfg = { ...cfg, model: BusinessModel.FNB };
@@ -79,6 +86,7 @@ export default function App() {
     }
     setProducts(prods);
     setTableOrders(tables);
+    setRetailOrders(retails);
     setLoaded(true);
   }, [initialBan]);
 
@@ -147,6 +155,66 @@ export default function App() {
     setTableOrders(await loadTableOrders());
   };
 
+  const handleSaveRetailOrder = async (order: RetailPickupOrder) => {
+    await saveRetailOrder(order);
+    setRetailOrders(await loadRetailOrders());
+  };
+
+  const handleRemoveRetailOrder = async (orderId: string) => {
+    await removeRetailOrder(orderId);
+    setRetailOrders(await loadRetailOrders());
+  };
+
+  const handleTransferTable = async (fromTable: number, toTable: number) => {
+    if (fromTable === toTable) return;
+    const all = await loadTableOrders();
+    const fromOrd = all.find((t) => t.tableNumber === fromTable);
+    if (!fromOrd) return;
+    const toOrd = all.find((t) => t.tableNumber === toTable);
+
+    let nextOrder: TableOrder;
+    if (toOrd) {
+      const mergedItems: CartItem[] = [...toOrd.items];
+      for (const incoming of fromOrd.items) {
+        const idx = mergedItems.findIndex(
+          (i) => i.productId === incoming.productId && (i.note || '') === (incoming.note || '')
+        );
+        if (idx >= 0) {
+          mergedItems[idx] = { ...mergedItems[idx], qty: mergedItems[idx].qty + incoming.qty };
+        } else {
+          mergedItems.push(incoming);
+        }
+      }
+      const totalAmount = mergedItems.reduce((s, i) => s + i.price * i.qty, 0);
+      nextOrder = {
+        ...toOrd,
+        items: mergedItems,
+        totalAmount,
+        status:
+          toOrd.status === TableStatus.PAYMENT_REQUESTED ||
+          fromOrd.status === TableStatus.PAYMENT_REQUESTED
+            ? TableStatus.PAYMENT_REQUESTED
+            : toOrd.status === TableStatus.SUPPORT_REQUESTED ||
+                fromOrd.status === TableStatus.SUPPORT_REQUESTED
+              ? TableStatus.SUPPORT_REQUESTED
+              : TableStatus.OCCUPIED,
+        updatedAt: new Date().toISOString(),
+        unreadAlert: false,
+      };
+    } else {
+      nextOrder = {
+        ...fromOrd,
+        tableNumber: toTable,
+        updatedAt: new Date().toISOString(),
+        unreadAlert: false,
+      };
+    }
+
+    await saveTableOrder(nextOrder);
+    await clearTableOrder(fromTable);
+    setTableOrders(await loadTableOrders());
+  };
+
   const handleOpenTablePreview = (tableNum: number) => {
     setTableNumberPreview(tableNum);
     setActiveTab(AppTab.STOREFRONT);
@@ -201,6 +269,7 @@ export default function App() {
             tableOrders={tableOrders}
             initialTableNumber={tableNumberPreview}
             onSaveTableOrder={handleSaveTableOrder}
+            onSaveRetailOrder={handleSaveRetailOrder}
             onSaveInvoice={handleSaveInvoice}
             onUpdateProductStock={handleUpdateProductStock}
           />
@@ -211,10 +280,14 @@ export default function App() {
             config={config}
             products={products}
             tableOrders={tableOrders}
+            retailOrders={retailOrders}
             onSaveInvoice={handleSaveInvoice}
             onUpdateProductStock={handleUpdateProductStock}
             onSaveTableOrder={handleSaveTableOrder}
             onClearTableOrder={handleClearTableOrder}
+            onSaveRetailOrder={handleSaveRetailOrder}
+            onRemoveRetailOrder={handleRemoveRetailOrder}
+            onTransferTable={handleTransferTable}
             onOpenTablePreview={handleOpenTablePreview}
           />
         )}

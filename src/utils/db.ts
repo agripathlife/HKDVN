@@ -4,6 +4,7 @@ import {
   PaymentMethod,
   ProductItem,
   ProductStatus,
+  RetailPickupOrder,
   ShopConfig,
   TableOrder,
   TableStatus,
@@ -436,4 +437,31 @@ export async function clearGitHubToken(): Promise<void> {
   const db = await openDB();
   await deleteFromStore(db, STORE_KV, 'githubToken');
 }
+
+export async function loadRetailOrders(): Promise<RetailPickupOrder[]> {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE_KV, 'readonly');
+    const req = tx.objectStore(STORE_KV).get('retailPickupOrders');
+    req.onsuccess = () => resolve(Array.isArray(req.result) ? (req.result as RetailPickupOrder[]) : []);
+    req.onerror = () => resolve([]);
+  });
+}
+
+export async function saveRetailOrder(order: RetailPickupOrder): Promise<void> {
+  const db = await openDB();
+  const current = await loadRetailOrders();
+  const next = [order, ...current.filter((o) => o.orderId !== order.orderId)];
+  await putKV(db, 'retailPickupOrders', next);
+  broadcastUpdate('retailOrders');
+}
+
+export async function removeRetailOrder(orderId: string): Promise<void> {
+  const db = await openDB();
+  const current = await loadRetailOrders();
+  const next = current.filter((o) => o.orderId !== orderId);
+  await putKV(db, 'retailPickupOrders', next);
+  broadcastUpdate('retailOrders');
+}
+
 

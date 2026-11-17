@@ -108,8 +108,11 @@ export function buildTenantStorefrontHTML(config: ShopConfig): string {
       function saveLiveBridge(payload) {
         try {
           var existing = JSON.parse(localStorage.getItem(storageBridgeKey) || '{}');
-          existing[String(payload.tableNumber)] = Object.assign({}, payload, { updatedAt: new Date().toISOString() });
-          localStorage.setItem(storageBridgeKey, JSON.stringify(existing));
+          var key = String(payload.orderKey || payload.orderId || payload.tableNumber || '');
+          if (key) {
+            existing[key] = Object.assign({}, payload, { updatedAt: new Date().toISOString() });
+            localStorage.setItem(storageBridgeKey, JSON.stringify(existing));
+          }
         } catch (e) {}
       }
 
@@ -273,24 +276,245 @@ export function buildTenantStorefrontHTML(config: ShopConfig): string {
       function openBagModal() {
         var root = document.getElementById('modal-root');
         var total = bag.reduce(function (s, i) { return s + i.price * i.qty; }, 0);
-        root.innerHTML = '<div id="bag-backdrop" class="fixed inset-0 z-50 bg-slate-950/60 flex items-end sm:items-center justify-center">' +
-          '<div class="w-full max-w-md bg-white rounded-t-3xl sm:rounded-2xl p-5 flex flex-col max-h-[88vh]">' +
-          '<div class="flex items-center justify-between border-b border-slate-100 pb-3"><h3 class="text-base font-bold">Giỏ hàng của bạn</h3>' +
-          '<button id="close-bag" class="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg">Đóng</button></div>' +
-          '<div class="flex-1 overflow-y-auto py-3 space-y-2.5">' +
-          (bag.length ? bag.map(function (i) {
-            return '<div class="flex items-center justify-between gap-2 text-sm border-b border-slate-100 pb-2"><span>' + i.qty + ' × ' + esc(i.name) + '</span><span class="tabular-nums font-bold">' + vnd(i.price * i.qty) + '</span></div>';
-          }).join('') : '<p class="text-sm text-slate-500 text-center py-8">Giỏ hàng đang trống.</p>') +
-          '</div>' +
-          '<div class="border-t border-slate-100 pt-4 space-y-3">' +
-          '<div class="flex justify-between font-bold text-base"><span>Tổng cộng</span><span class="tabular-nums text-[#0F766E]">' + vnd(total) + '</span></div>' +
-          '<button id="bag-pay" ' + (!bag.length ? 'disabled' : '') + ' class="w-full py-3.5 bg-[#0F766E] disabled:bg-slate-200 text-white text-sm font-bold rounded-xl">Thanh toán VietQR</button>' +
-          '</div></div></div>';
-        document.getElementById('close-bag').onclick = function () { root.innerHTML = ''; };
-        document.getElementById('bag-backdrop').onclick = function (e) { if (e.target.id === 'bag-backdrop') root.innerHTML = ''; };
-        document.getElementById('bag-pay').onclick = function () {
-          showQRModal('Thanh toán đơn hàng', total, 'MANG DI', 'Vui lòng quét mã VietQR để thanh toán.');
-        };
+        var savedPickup = 'Sau 30 phút';
+        try {
+          var prevInfo = JSON.parse(localStorage.getItem('hkdvn_cust_info') || '{}');
+          var defName = prevInfo.name || '';
+          var defPhone = prevInfo.phone || '';
+        } catch (e) { var defName = ''; var defPhone = ''; }
+
+        function renderBagBody() {
+          total = bag.reduce(function (s, i) { return s + i.price * i.qty; }, 0);
+          root.innerHTML = '<div id="bag-backdrop" class="fixed inset-0 z-50 bg-slate-950/60 flex items-end sm:items-center justify-center">' +
+            '<div class="w-full max-w-md bg-white rounded-t-3xl sm:rounded-2xl p-5 flex flex-col max-h-[92vh]">' +
+            '<div class="flex items-center justify-between border-b border-slate-100 pb-3">' +
+            '<div><h3 class="text-base font-bold text-slate-900">Đơn đặt hàng nhận tại quán</h3>' +
+            '<p class="text-[11px] text-slate-500">Thanh toán trực tiếp tại cửa hàng khi đến lấy</p></div>' +
+            '<div class="flex items-center gap-2">' +
+            (bag.length ? '<button id="clear-bag" type="button" class="text-xs font-semibold text-red-700">Xóa hết</button>' : '') +
+            '<button id="close-bag" type="button" class="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg">Đóng</button>' +
+            '</div></div>' +
+            '<div class="flex-1 overflow-y-auto py-3 space-y-2.5">' +
+            (bag.length ? bag.map(function (i) {
+              return '<div class="flex items-center justify-between gap-2 text-sm border-b border-slate-100 pb-2.5">' +
+                '<div class="min-w-0 flex-1"><p class="font-semibold text-slate-900 truncate">' + esc(i.name) + '</p>' +
+                '<p class="text-xs text-slate-500 tabular-nums">' + vnd(i.price) + ' × ' + i.qty + ' = <strong class="text-slate-900">' + vnd(i.price * i.qty) + '</strong></p></div>' +
+                '<div class="flex items-center gap-1 shrink-0">' +
+                '<button type="button" data-bag-minus="' + esc(i.productId) + '" class="w-8 h-8 rounded-lg border border-slate-200 font-bold flex items-center justify-center">−</button>' +
+                '<span class="w-6 text-center text-xs font-bold tabular-nums">' + i.qty + '</span>' +
+                '<button type="button" data-bag-plus="' + esc(i.productId) + '" class="w-8 h-8 rounded-lg bg-[#0F766E] text-white font-bold flex items-center justify-center">+</button>' +
+                '<button type="button" data-bag-rm="' + esc(i.productId) + '" class="ml-1 px-2 h-8 rounded-lg border border-red-200 text-red-700 text-[11px] font-bold">Bỏ</button>' +
+                '</div></div>';
+            }).join('') : '<p class="text-sm text-slate-500 text-center py-8">Giỏ hàng đang trống. Chọn sản phẩm để đặt hàng.</p>') +
+            '</div>' +
+            '<form id="retail-order-form" class="border-t border-slate-100 pt-3.5 space-y-2.5">' +
+            '<div class="flex justify-between font-bold text-base"><span>Tạm tính (trả tại quán)</span><span class="tabular-nums text-[#0F766E]">' + vnd(total) + '</span></div>' +
+            (bag.length ? (
+              '<div class="grid grid-cols-2 gap-2">' +
+              '<div><label class="block text-[11px] font-semibold text-slate-600 mb-1">Tên khách hàng *</label>' +
+              '<input id="cust-name" required value="' + esc(defName) + '" placeholder="Nguyễn Văn An" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl" /></div>' +
+              '<div><label class="block text-[11px] font-semibold text-slate-600 mb-1">Số điện thoại *</label>' +
+              '<input id="cust-phone" required type="tel" inputmode="tel" value="' + esc(defPhone) + '" placeholder="0912345678" class="w-full px-3 py-2 text-xs font-mono border border-slate-200 rounded-xl" /></div>' +
+              '</div>' +
+              '<div><label class="block text-[11px] font-semibold text-slate-600 mb-1">Thời gian đến nhận hàng *</label>' +
+              '<div class="flex flex-wrap gap-1.5 mb-1.5">' +
+              ['Sau 15 phút', 'Sau 30 phút', 'Sau 1 giờ'].map(function (pr) {
+                return '<button type="button" data-pickup-preset="' + esc(pr) + '" class="px-2.5 py-1 text-[11px] font-semibold rounded-lg border ' + (savedPickup === pr ? 'bg-[#0F766E] text-white border-[#0F766E]' : 'bg-slate-50 text-slate-700 border-slate-200') + '">' + esc(pr) + '</button>';
+              }).join('') +
+              '</div>' +
+              '<input id="cust-pickup" required value="' + esc(savedPickup) + '" placeholder="VD: 17:30 hôm nay hoặc Sau 30 phút" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl" /></div>' +
+              '<input id="cust-note" type="text" placeholder="Ghi chú thêm cho cửa hàng (tùy chọn)..." class="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl" />'
+            ) : '') +
+            '<button id="bag-submit" type="submit" ' + (!bag.length ? 'disabled' : '') + ' class="w-full min-h-[46px] bg-[#0F766E] disabled:bg-slate-200 text-white text-sm font-bold rounded-xl">Xác nhận đặt hàng (Thanh toán tại quán)</button>' +
+            '</form></div></div>';
+
+          document.getElementById('close-bag').onclick = function () { root.innerHTML = ''; };
+          document.getElementById('bag-backdrop').onclick = function (e) { if (e.target.id === 'bag-backdrop') root.innerHTML = ''; };
+          var clrBtn = document.getElementById('clear-bag');
+          if (clrBtn) clrBtn.onclick = function () {
+            bag = [];
+            renderHeaderAndCats();
+            renderMenu();
+            renderDock();
+            renderBagBody();
+          };
+          root.querySelectorAll('[data-bag-plus]').forEach(function (b) {
+            b.onclick = function () {
+              var id = b.getAttribute('data-bag-plus');
+              var it = bag.find(function (x) { return x.productId === id; });
+              if (it) it.qty += 1;
+              renderHeaderAndCats(); renderMenu(); renderDock(); renderBagBody();
+            };
+          });
+          root.querySelectorAll('[data-bag-minus]').forEach(function (b) {
+            b.onclick = function () {
+              var id = b.getAttribute('data-bag-minus');
+              var idx = bag.findIndex(function (x) { return x.productId === id; });
+              if (idx >= 0) {
+                bag[idx].qty -= 1;
+                if (bag[idx].qty <= 0) bag.splice(idx, 1);
+              }
+              renderHeaderAndCats(); renderMenu(); renderDock(); renderBagBody();
+            };
+          });
+          root.querySelectorAll('[data-bag-rm]').forEach(function (b) {
+            b.onclick = function () {
+              var id = b.getAttribute('data-bag-rm');
+              bag = bag.filter(function (x) { return x.productId !== id; });
+              renderHeaderAndCats(); renderMenu(); renderDock(); renderBagBody();
+            };
+          });
+          root.querySelectorAll('[data-pickup-preset]').forEach(function (b) {
+            b.onclick = function () {
+              savedPickup = b.getAttribute('data-pickup-preset');
+              var inp = document.getElementById('cust-pickup');
+              if (inp) inp.value = savedPickup;
+              root.querySelectorAll('[data-pickup-preset]').forEach(function (other) {
+                var active = other.getAttribute('data-pickup-preset') === savedPickup;
+                other.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-lg border ' + (active ? 'bg-[#0F766E] text-white border-[#0F766E]' : 'bg-slate-50 text-slate-700 border-slate-200');
+              });
+            };
+          });
+          var form = document.getElementById('retail-order-form');
+          if (form) form.onsubmit = async function (e) {
+            e.preventDefault();
+            if (!bag.length) return;
+            var cName = (document.getElementById('cust-name').value || '').trim();
+            var cPhone = (document.getElementById('cust-phone').value || '').trim();
+            var cPickup = (document.getElementById('cust-pickup').value || '').trim() || 'Sớm nhất';
+            var cNote = (document.getElementById('cust-note').value || '').trim();
+            if (!cName || !cPhone) return;
+            try { localStorage.setItem('hkdvn_cust_info', JSON.stringify({ name: cName, phone: cPhone })); } catch (err) {}
+
+            var btn = document.getElementById('bag-submit');
+            if (btn) { btn.disabled = true; btn.textContent = 'Đang gửi đơn đặt hàng...'; }
+
+            var orderId = 'DH-' + Date.now().toString().slice(-6);
+            var ok = await postGas('placeRetailOrder', {
+              orderKey: orderId,
+              orderId: orderId,
+              orderType: 'retail_pickup',
+              tableNumber: 0,
+              status: 'retail_pending',
+              customerName: cName,
+              customerPhone: cPhone,
+              pickupTime: cPickup,
+              note: cNote,
+              items: bag,
+              totalAmount: total
+            });
+            var orderedTotal = total;
+            bag = [];
+            renderHeaderAndCats();
+            renderMenu();
+            renderDock();
+            root.innerHTML = '<div id="ok-backdrop" class="fixed inset-0 z-50 bg-slate-950/60 flex items-end sm:items-center justify-center p-0 sm:p-4">' +
+              '<div class="w-full max-w-sm bg-white rounded-t-3xl sm:rounded-2xl p-6 space-y-4 text-center">' +
+              '<div class="w-12 h-12 mx-auto rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center">' +
+              '<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div>' +
+              '<h3 class="text-lg font-bold text-slate-900">Đặt hàng thành công!</h3>' +
+              '<p class="text-xs text-slate-600 leading-relaxed">Mã đơn <strong class="font-mono">' + esc(orderId) + '</strong> · Tổng tạm tính <strong class="text-[#0F766E]">' + vnd(orderedTotal) + '</strong></p>' +
+              '<div class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-left space-y-1">' +
+              '<p><strong>Khách hàng:</strong> ' + esc(cName) + ' (' + esc(cPhone) + ')</p>' +
+              '<p><strong>Giờ đến nhận:</strong> ' + esc(cPickup) + '</p>' +
+              '<p class="text-[#0F766E] font-semibold pt-1">Thanh toán trực tiếp tại cửa hàng khi đến nhận.</p>' +
+              '</div>' +
+              '<button id="ok-close" type="button" class="w-full min-h-[44px] bg-[#0F766E] text-white text-sm font-bold rounded-xl">Tiếp tục xem sản phẩm</button>' +
+              '</div></div>';
+            document.getElementById('ok-close').onclick = function () { root.innerHTML = ''; };
+            document.getElementById('ok-backdrop').onclick = function (ev) { if (ev.target.id === 'ok-backdrop') root.innerHTML = ''; };
+            if (ok) showToast('Đã gửi đơn ' + orderId + ' tới cửa hàng!');
+          };
+        }
+        renderBagBody();
+      }
+
+      function openPendingOrderModal() {
+        var root = document.getElementById('modal-root');
+        function renderPendingBody() {
+          var pendingList = Object.keys(pendingCart).map(function (id) {
+            var p = products.find(function (x) { return x.id === id; });
+            return p ? Object.assign({}, p, { qty: pendingCart[id].qty, note: pendingCart[id].note || '' }) : null;
+          }).filter(Boolean);
+          var pCount = pendingList.reduce(function (s, i) { return s + i.qty; }, 0);
+          var pTotal = pendingList.reduce(function (s, i) { return s + i.price * i.qty; }, 0);
+
+          root.innerHTML = '<div id="pend-backdrop" class="fixed inset-0 z-50 bg-slate-950/60 flex items-end sm:items-center justify-center">' +
+            '<div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl p-5 space-y-4 max-h-[88vh] flex flex-col">' +
+            '<div class="flex items-center justify-between border-b border-slate-100 pb-3">' +
+            '<div><h3 class="text-base font-bold text-slate-900">Món đang chọn · Bàn ' + tableNumber + '</h3>' +
+            '<p class="text-[11px] text-slate-500">Tăng giảm số lượng hoặc bỏ món trước khi gửi bếp</p></div>' +
+            '<div class="flex items-center gap-2">' +
+            (pCount > 0 ? '<button id="clear-pend" type="button" class="text-xs font-semibold text-red-700">Xóa hết</button>' : '') +
+            '<button id="close-pend" type="button" class="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg">Đóng</button>' +
+            '</div></div>' +
+            '<div class="flex-1 overflow-y-auto space-y-3">' +
+            (pendingList.length ? pendingList.map(function (i) {
+              return '<div class="border-b border-slate-100 pb-3 space-y-2">' +
+                '<div class="flex items-start justify-between gap-2 text-sm">' +
+                '<div class="min-w-0 flex-1"><p class="font-semibold text-slate-900">' + esc(i.name) + '</p>' +
+                '<p class="text-xs text-slate-500 tabular-nums">' + vnd(i.price) + ' / ' + esc(i.unit || 'Phần') + '</p></div>' +
+                '<span class="tabular-nums font-bold text-[#0F766E] shrink-0">' + vnd(i.price * i.qty) + '</span></div>' +
+                '<div class="flex items-center justify-between gap-2">' +
+                '<div class="flex items-center gap-1.5">' +
+                '<button type="button" data-p-minus="' + esc(i.id) + '" class="w-8 h-8 rounded-lg border border-slate-200 font-bold flex items-center justify-center">−</button>' +
+                '<span class="w-6 text-center text-xs font-bold tabular-nums">' + i.qty + '</span>' +
+                '<button type="button" data-p-plus="' + esc(i.id) + '" class="w-8 h-8 rounded-lg bg-[#0F766E] text-white font-bold flex items-center justify-center">+</button>' +
+                '</div>' +
+                '<button type="button" data-p-rm="' + esc(i.id) + '" class="px-2.5 h-8 rounded-lg border border-red-200 text-red-700 text-xs font-bold">Bỏ món</button>' +
+                '</div>' +
+                '<input type="text" data-p-note="' + esc(i.id) + '" value="' + esc(i.note) + '" placeholder="Ghi chú món (ít đá, không hành)..." class="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg" />' +
+                '</div>';
+            }).join('') : '<p class="text-sm text-slate-500 py-8 text-center">Chưa có món nào đang chọn.</p>') +
+            '</div>' +
+            '<div class="pt-3 border-t border-slate-100 space-y-3">' +
+            '<div class="flex justify-between items-center font-bold"><span>Tổng món đang chọn</span><span class="text-lg tabular-nums text-[#0F766E]">' + vnd(pTotal) + '</span></div>' +
+            '<button id="pend-submit" type="button" ' + (pCount === 0 ? 'disabled' : '') + ' class="w-full min-h-[46px] bg-[#0F766E] disabled:bg-slate-200 text-white text-sm font-bold rounded-xl">Gửi đơn gọi món (' + pCount + ' món)</button>' +
+            '</div></div></div>';
+
+          document.getElementById('close-pend').onclick = function () { root.innerHTML = ''; };
+          document.getElementById('pend-backdrop').onclick = function (e) { if (e.target.id === 'pend-backdrop') root.innerHTML = ''; };
+          var clrP = document.getElementById('clear-pend');
+          if (clrP) clrP.onclick = function () { pendingCart = {}; renderMenu(); renderDock(); renderPendingBody(); };
+          root.querySelectorAll('[data-p-plus]').forEach(function (b) {
+            b.onclick = function () {
+              var id = b.getAttribute('data-p-plus');
+              if (pendingCart[id]) pendingCart[id].qty += 1;
+              renderMenu(); renderDock(); renderPendingBody();
+            };
+          });
+          root.querySelectorAll('[data-p-minus]').forEach(function (b) {
+            b.onclick = function () {
+              var id = b.getAttribute('data-p-minus');
+              if (pendingCart[id]) {
+                pendingCart[id].qty -= 1;
+                if (pendingCart[id].qty <= 0) delete pendingCart[id];
+              }
+              renderMenu(); renderDock(); renderPendingBody();
+            };
+          });
+          root.querySelectorAll('[data-p-rm]').forEach(function (b) {
+            b.onclick = function () {
+              var id = b.getAttribute('data-p-rm');
+              delete pendingCart[id];
+              renderMenu(); renderDock(); renderPendingBody();
+            };
+          });
+          root.querySelectorAll('[data-p-note]').forEach(function (inp) {
+            inp.oninput = function () {
+              var id = inp.getAttribute('data-p-note');
+              if (pendingCart[id]) pendingCart[id].note = inp.value;
+              renderMenu();
+            };
+          });
+          var subBtn = document.getElementById('pend-submit');
+          if (subBtn) subBtn.onclick = function () {
+            var dockSubmit = document.getElementById('btn-submit-order');
+            root.innerHTML = '';
+            if (dockSubmit) dockSubmit.click();
+          };
+        }
+        renderPendingBody();
       }
 
       function renderHeaderAndCats() {
@@ -329,8 +553,8 @@ export function buildTenantStorefrontHTML(config: ShopConfig): string {
           var total = bag.reduce(function (s, i) { return s + i.price * i.qty; }, 0);
           if (!count) { dock.innerHTML = ''; return; }
           dock.innerHTML = '<div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">' +
-            '<div><p class="text-xs text-slate-500">Đang chọn ' + count + ' sản phẩm</p><p class="text-base font-bold tabular-nums text-[#0F766E]">' + vnd(total) + '</p></div>' +
-            '<button id="dock-bag" class="px-5 py-3 min-h-[46px] bg-[#0F766E] text-white text-sm font-bold rounded-xl">Xem giỏ &amp; Thanh toán</button></div>';
+            '<div><p class="text-xs text-slate-500">Đang chọn ' + count + ' sản phẩm (trả tại quán)</p><p class="text-base font-bold tabular-nums text-[#0F766E]">' + vnd(total) + '</p></div>' +
+            '<button id="dock-bag" class="px-5 py-3 min-h-[46px] bg-[#0F766E] text-white text-sm font-bold rounded-xl">Xem giỏ &amp; Đặt hàng</button></div>';
           document.getElementById('dock-bag').onclick = openBagModal;
           return;
         }
@@ -346,14 +570,19 @@ export function buildTenantStorefrontHTML(config: ShopConfig): string {
 
         dock.innerHTML = '<div class="max-w-5xl mx-auto px-3.5 sm:px-5 py-3 space-y-2.5">' +
           '<div class="flex items-center justify-between gap-2 text-xs">' +
-          '<span class="font-semibold text-slate-800">' + (pCount > 0 ? 'Đang chọn: ' + pCount + ' món (' + vnd(pTotal) + ')' : 'Chạm + Chọn món từ thực đơn') + '</span>' +
-          '<button id="btn-view-sub" type="button" class="text-[#0F766E] font-semibold underline-offset-2 ' + (sCount > 0 ? 'underline' : 'opacity-60') + '">Đã gọi: ' + sCount + ' món · ' + vnd(sTotal) + '</button>' +
+          (pCount > 0
+            ? '<button id="btn-view-pending" type="button" class="font-bold text-[#0F766E] underline underline-offset-2 text-left">Đang chọn: ' + pCount + ' món (' + vnd(pTotal) + ') · Sửa ›</button>'
+            : '<span class="font-semibold text-slate-700">Chạm + Chọn món từ thực đơn</span>') +
+          '<button id="btn-view-sub" type="button" class="text-slate-700 font-semibold underline-offset-2 ' + (sCount > 0 ? 'underline text-[#0F766E]' : 'opacity-60') + '">Đã gọi: ' + sCount + ' món · ' + vnd(sTotal) + '</button>' +
           '</div>' +
           '<div class="grid grid-cols-2 gap-2.5">' +
           '<button id="btn-submit-order" type="button" ' + (pCount === 0 ? 'disabled' : '') + ' class="min-h-[46px] px-3 bg-[#0F766E] hover:bg-[#0D655E] disabled:bg-slate-200 disabled:text-slate-400 text-white text-sm font-bold rounded-xl transition-colors">' +
           (pCount > 0 ? 'Gọi món (' + pCount + ')' : 'Gọi món') + '</button>' +
           '<button id="btn-support-pay" type="button" class="min-h-[46px] px-3 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold rounded-xl transition-colors">Thanh toán / Hỗ trợ</button>' +
           '</div></div>';
+
+        var pendViewBtn = document.getElementById('btn-view-pending');
+        if (pendViewBtn) pendViewBtn.onclick = openPendingOrderModal;
 
         var subViewBtn = document.getElementById('btn-view-sub');
         if (subViewBtn) subViewBtn.onclick = openSubmittedModal;
@@ -535,6 +764,7 @@ export function buildTenantStorefrontHTML(config: ShopConfig): string {
                   '<button data-minus="' + esc(p.id) + '" class="w-8 h-8 rounded-lg border border-slate-200 text-slate-700 font-bold flex items-center justify-center">−</button>' +
                   '<span class="w-5 text-center text-xs font-bold tabular-nums">' + cur.qty + '</span>' +
                   '<button data-plus="' + esc(p.id) + '" class="w-8 h-8 rounded-lg bg-[#0F766E] text-white font-bold flex items-center justify-center">+</button>' +
+                  '<button data-remove="' + esc(p.id) + '" class="ml-0.5 px-1.5 h-8 rounded-lg border border-red-200 text-red-700 text-[11px] font-bold">Bỏ</button>' +
                   '</div>'
               ) +
               '</div>' +
@@ -588,6 +818,20 @@ export function buildTenantStorefrontHTML(config: ShopConfig): string {
               if (!cur) return;
               cur.qty -= 1;
               if (cur.qty <= 0) delete pendingCart[id];
+            }
+            renderMenu();
+            renderDock();
+          };
+        });
+
+        app.querySelectorAll('[data-remove]').forEach(function (btn) {
+          btn.onclick = function () {
+            var id = btn.getAttribute('data-remove');
+            if (config.model === 'retail') {
+              bag = bag.filter(function (x) { return x.productId !== id; });
+              renderHeaderAndCats();
+            } else {
+              delete pendingCart[id];
             }
             renderMenu();
             renderDock();
@@ -723,7 +967,12 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
       var products = [];
       var activeTab = 'ops';
       var posCart = [];
+      var posSearch = '';
+      var posCat = 'Tất cả';
+      var posCustomerLabel = 'Khách tại quầy';
+      var activeRetailOrderId = null;
       var tableOrders = [];
+      var retailOrders = [];
       var invoices = JSON.parse(localStorage.getItem('hkdvn_tenant_invoices') || '[]');
       var ghStorageKey = 'hkdvn_tenant_gh_token_' + location.pathname;
       var infraStorageKey = 'hkdvn_tenant_infra_' + location.pathname;
@@ -791,6 +1040,9 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
 
       function vnd(n) { return new Intl.NumberFormat('vi-VN').format(Math.round(Number(n) || 0)) + 'đ'; }
       function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+      function noAccent(str) {
+        return String(str || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().trim();
+      }
       function fmtTime(iso) {
         try { return new Date(iso).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); }
         catch (e) { return ''; }
@@ -892,7 +1144,11 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
               '<p class="text-[11px] text-amber-800 truncate">' + esc(latestUnread.detail) + '</p></div>' +
               '<button id="banner-open-notif" class="px-3 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-xl shrink-0">Xem</button></div>';
             document.getElementById('banner-open-notif').onclick = function () {
-              openTableDetailSheet(latestUnread.tableNumber);
+              if (latestUnread.orderKey) {
+                openRetailOrderModal(latestUnread.orderKey);
+              } else {
+                openTableDetailSheet(latestUnread.tableNumber);
+              }
               latestUnread.read = true;
               unreadCount = notifications.filter(function (n) { return !n.read; }).length;
               updateBellUI();
@@ -910,7 +1166,33 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
         el.className = 'text-[11px] truncate ' + (syncHasError ? 'text-amber-700 font-medium' : 'text-slate-500');
       }
 
+      function isRetailOrderObj(o) {
+        return Boolean(o && (o.orderType === 'retail_pickup' || o.status === 'retail_pending' || String(o.orderKey || o.orderId || '').indexOf('DH-') === 0));
+      }
+
       function pushNotification(order) {
+        var isRet = isRetailOrderObj(order);
+        var itemCount = Array.isArray(order.items) ? order.items.reduce(function (s, i) { return s + (i.qty || 1); }, 0) : 0;
+        if (isRet) {
+          var oKey = String(order.orderKey || order.orderId || order.lastOrderId || '');
+          var rTitle = 'Đơn đặt mới: ' + (order.customerName || 'Khách hàng') + (order.customerPhone ? ' (' + order.customerPhone + ')' : '');
+          var rDetail = 'Nhận lúc: ' + (order.pickupTime || 'Sớm nhất') + ' · ' + itemCount + ' món · ' + vnd(order.totalAmount);
+          notifications.unshift({
+            id: oKey + '-' + Date.now(),
+            orderKey: oKey,
+            tableNumber: 0,
+            title: rTitle,
+            detail: rDetail,
+            time: fmtTime(order.updatedAt || new Date().toISOString()),
+            read: false
+          });
+          if (notifications.length > 30) notifications.length = 30;
+          unreadCount = notifications.filter(function (n) { return !n.read; }).length;
+          updateBellUI();
+          speakVN('Có đơn đặt hàng mới từ ' + (order.customerName || 'khách hàng') + ', hẹn lấy ' + (order.pickupTime || ''));
+          return;
+        }
+
         var isPay = order.status === 'payment_requested';
         var isHelp = order.status === 'support_requested';
         var title = isPay
@@ -920,7 +1202,7 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
             : 'Bàn ' + order.tableNumber + ' vừa gọi món mới';
         var detail = isHelp
           ? String(order.lastOrderId || '').replace(/^HOTRO:\\s*/, '') || 'Cần nhân viên hỗ trợ'
-          : (Array.isArray(order.items) ? order.items.reduce(function (s, i) { return s + (i.qty || 1); }, 0) : 0) + ' món · ' + vnd(order.totalAmount);
+          : itemCount + ' món · ' + vnd(order.totalAmount);
 
         notifications.unshift({
           id: order.tableNumber + '-' + Date.now(),
@@ -938,28 +1220,38 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
 
       function applyIncomingOrders(incomingOrders) {
         var hasChange = false;
+        var nextTables = [];
+        var nextRetails = [];
         incomingOrders.forEach(function (o) {
-          var sig = o.status + '|' + o.lastOrderId + '|' + o.updatedAt + '|' + (o.items ? o.items.length : 0);
-          var prev = lastSnapshot[o.tableNumber];
+          var isRet = isRetailOrderObj(o);
+          var key = isRet ? String(o.orderKey || o.orderId || o.lastOrderId) : String(o.tableNumber);
+          var sig = o.status + '|' + (o.lastOrderId || o.orderId || '') + '|' + o.updatedAt + '|' + (o.items ? o.items.length : 0);
+          var prev = lastSnapshot[key];
           if (!firstPollDone) {
-            if (o.status === 'payment_requested' || o.status === 'support_requested' || (o.items && o.items.length > 0)) {
+            if (isRet || o.status === 'payment_requested' || o.status === 'support_requested' || (o.items && o.items.length > 0)) {
               pushNotification(o);
             }
           } else if (prev !== sig) {
             pushNotification(o);
           }
           if (prev !== sig) hasChange = true;
-          lastSnapshot[o.tableNumber] = sig;
+          lastSnapshot[key] = sig;
+          if (isRet) nextRetails.push(o);
+          else if (Number(o.tableNumber) > 0) nextTables.push(o);
         });
+        if (nextTables.length !== tableOrders.length || nextRetails.length !== retailOrders.length) {
+          hasChange = true;
+        }
         firstPollDone = true;
-        tableOrders = incomingOrders;
+        tableOrders = nextTables;
+        retailOrders = nextRetails;
         if (hasChange && activeTab === 'ops') render();
       }
 
       function readLiveBridgeOrders() {
         try {
           var raw = JSON.parse(localStorage.getItem(storageBridgeKey) || '{}');
-          return Object.keys(raw).map(function (k) { return raw[k]; }).filter(function (o) { return o && o.tableNumber; });
+          return Object.keys(raw).map(function (k) { return raw[k]; }).filter(function (o) { return o && (o.tableNumber || o.orderKey || o.orderId); });
         } catch (e) { return []; }
       }
 
@@ -1398,7 +1690,7 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
           '<button id="close-notif" class="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg">Đóng</button></div></div>' +
           '<div class="flex-1 overflow-y-auto space-y-2.5">' +
           (notifications.length ? notifications.map(function (n) {
-            return '<button data-notif-table="' + n.tableNumber + '" data-notif-id="' + esc(n.id) + '" class="w-full text-left p-3.5 rounded-xl border ' + (n.read ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-300') + '">' +
+            return '<button data-notif-key="' + esc(n.orderKey || '') + '" data-notif-table="' + n.tableNumber + '" data-notif-id="' + esc(n.id) + '" class="w-full text-left p-3.5 rounded-xl border ' + (n.read ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-300') + '">' +
               '<div class="flex items-center justify-between gap-2"><span class="text-xs font-bold text-slate-900">' + esc(n.title) + '</span>' +
               '<span class="text-[11px] text-slate-500 tabular-nums">' + esc(n.time) + '</span></div>' +
               '<p class="text-xs text-slate-600 mt-1">' + esc(n.detail) + '</p></button>';
@@ -1414,14 +1706,19 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
           updateBellUI();
           openNotificationsModal();
         };
-        modal.querySelectorAll('[data-notif-table]').forEach(function (btn) {
+        modal.querySelectorAll('[data-notif-id]').forEach(function (btn) {
           btn.onclick = function () {
             var id = btn.getAttribute('data-notif-id');
             var found = notifications.find(function (n) { return n.id === id; });
             if (found) found.read = true;
             unreadCount = notifications.filter(function (n) { return !n.read; }).length;
             updateBellUI();
-            openTableDetailSheet(Number(btn.getAttribute('data-notif-table')));
+            var oKey = btn.getAttribute('data-notif-key');
+            if (oKey) {
+              openRetailOrderModal(oKey);
+            } else {
+              openTableDetailSheet(Number(btn.getAttribute('data-notif-table')));
+            }
           };
         });
       }
@@ -1444,8 +1741,15 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
         var isPay = ord.status === 'payment_requested';
         var helpNote = String(ord.lastOrderId || '').indexOf('HOTRO:') === 0 ? String(ord.lastOrderId).replace(/^HOTRO:\\s*/, '') : '';
 
+        var transferOptions = Array.from({ length: config.tableCount || 12 }, function (_, i) { return i + 1; })
+          .filter(function (n) { return n !== Number(tableNum); })
+          .map(function (n) {
+            var target = tableOrders.find(function (o) { return Number(o.tableNumber) === n; });
+            return '<option value="' + n + '">Bàn ' + n + (target ? ' (Đang có khách · Gộp bàn)' : ' (Trống)') + '</option>';
+          }).join('');
+
         modal.innerHTML = '<div id="td-bg" class="fixed inset-0 z-50 bg-slate-950/60 flex items-end sm:items-center justify-center">' +
-          '<div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl p-5 space-y-4 max-h-[90vh] flex flex-col">' +
+          '<div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl p-5 space-y-4 max-h-[92vh] flex flex-col">' +
           '<div class="flex items-center justify-between border-b border-slate-100 pb-3">' +
           '<div><h3 class="text-base font-bold text-slate-900">Chi tiết Bàn ' + tableNum + '</h3>' +
           '<p class="text-xs font-semibold ' + (isPay ? 'text-amber-700' : isHelp ? 'text-red-700' : 'text-[#0F766E]') + '">' +
@@ -1460,6 +1764,12 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
               '</div><span class="tabular-nums font-bold shrink-0">' + vnd(i.price * i.qty) + '</span></div>';
           }).join('') : '<p class="text-sm text-slate-500 py-4 text-center">Bàn chưa gọi món.</p>') +
           '</div>' +
+          (transferOptions ? '<div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">' +
+            '<p class="text-xs font-bold text-slate-700">Chuyển bàn sang bàn khác</p>' +
+            '<div class="flex items-center gap-2">' +
+            '<select id="td-transfer-target" class="flex-1 min-w-0 px-3 py-2 text-xs font-semibold bg-white border border-slate-200 rounded-lg">' + transferOptions + '</select>' +
+            '<button id="td-transfer-btn" type="button" class="px-3.5 py-2 bg-slate-900 text-white text-xs font-bold rounded-lg shrink-0">Chuyển bàn</button>' +
+            '</div></div>' : '') +
           '<div id="td-qr-box" class="hidden flex-col items-center p-3 bg-slate-50 rounded-xl border border-slate-200">' +
           '<img id="td-qr-img" class="w-40 h-40 bg-white p-1.5 rounded-lg border border-slate-200" alt="VietQR" />' +
           '<p class="text-xs text-slate-500 mt-1.5">' + esc(config.bank.bankShortName) + ' · ' + esc(config.bank.accountNumber) + '</p></div>' +
@@ -1472,6 +1782,65 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
 
         document.getElementById('td-close').onclick = function () { modal.innerHTML = ''; };
         document.getElementById('td-bg').onclick = function (e) { if (e.target.id === 'td-bg') modal.innerHTML = ''; };
+
+        var transferBtn = document.getElementById('td-transfer-btn');
+        if (transferBtn) transferBtn.onclick = async function () {
+          var destNum = Number(document.getElementById('td-transfer-target').value);
+          if (!destNum || destNum === Number(tableNum)) return;
+          transferBtn.disabled = true;
+          transferBtn.textContent = 'Đang chuyển...';
+
+          var existingDest = tableOrders.find(function (o) { return Number(o.tableNumber) === destNum; });
+          var nowIso = new Date().toISOString();
+          var updatedDest;
+          if (existingDest) {
+            var mergedItems = (existingDest.items || []).slice();
+            (ord.items || []).forEach(function (incoming) {
+              var mIdx = mergedItems.findIndex(function (x) {
+                return x.productId === incoming.productId && (x.note || '') === (incoming.note || '');
+              });
+              if (mIdx >= 0) {
+                mergedItems[mIdx] = Object.assign({}, mergedItems[mIdx], { qty: (mergedItems[mIdx].qty || 0) + (incoming.qty || 0) });
+              } else {
+                mergedItems.push(incoming);
+              }
+            });
+            var mTotal = mergedItems.reduce(function (s, i) { return s + (i.price || 0) * (i.qty || 1); }, 0);
+            updatedDest = {
+              tableNumber: destNum,
+              orderType: 'fnb_table',
+              status: (existingDest.status === 'payment_requested' || ord.status === 'payment_requested')
+                ? 'payment_requested'
+                : (existingDest.status === 'support_requested' || ord.status === 'support_requested')
+                  ? 'support_requested'
+                  : 'occupied',
+              items: mergedItems,
+              totalAmount: mTotal,
+              lastOrderId: existingDest.lastOrderId || ord.lastOrderId || '',
+              updatedAt: nowIso
+            };
+          } else {
+            updatedDest = Object.assign({}, ord, { tableNumber: destNum, updatedAt: nowIso });
+          }
+
+          tableOrders = tableOrders.filter(function (o) {
+            return Number(o.tableNumber) !== Number(tableNum) && Number(o.tableNumber) !== destNum;
+          });
+          tableOrders.push(updatedDest);
+          delete lastSnapshot[String(tableNum)];
+          lastSnapshot[String(destNum)] = updatedDest.status + '|' + updatedDest.lastOrderId + '|' + updatedDest.updatedAt + '|' + (updatedDest.items ? updatedDest.items.length : 0);
+
+          try {
+            var bridge = JSON.parse(localStorage.getItem(storageBridgeKey) || '{}');
+            delete bridge[String(tableNum)];
+            bridge[String(destNum)] = updatedDest;
+            localStorage.setItem(storageBridgeKey, JSON.stringify(bridge));
+          } catch (e) {}
+
+          await postGasAction({ action: 'transferTable', fromTable: Number(tableNum), toTable: destNum });
+          render();
+          openTableDetailSheet(destNum);
+        };
 
         var qrBtn = document.getElementById('td-show-qr');
         if (qrBtn) qrBtn.onclick = function () {
@@ -1507,6 +1876,79 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
             localStorage.setItem(storageBridgeKey, JSON.stringify(bridge));
           } catch (e) {}
           tableOrders = tableOrders.filter(function (o) { return Number(o.tableNumber) !== Number(tableNum); });
+          modal.innerHTML = '';
+          render();
+        };
+      }
+
+      function openRetailOrderModal(orderKey) {
+        var ord = retailOrders.find(function (o) { return String(o.orderKey || o.orderId || o.lastOrderId) === String(orderKey); });
+        var modal = document.getElementById('admin-modal');
+        if (!ord) {
+          modal.innerHTML = '<div id="ro-bg" class="fixed inset-0 z-50 bg-slate-950/60 flex items-end sm:items-center justify-center">' +
+            '<div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl p-5 space-y-4">' +
+            '<div class="flex justify-between items-center"><h3 class="text-base font-bold">Đơn hàng đã xử lý</h3>' +
+            '<button id="ro-close" class="px-3 py-1.5 text-xs font-semibold bg-slate-100 rounded-lg">Đóng</button></div>' +
+            '<p class="text-sm text-slate-500">Đơn đặt hàng này không còn trong danh sách chờ.</p></div></div>';
+          document.getElementById('ro-close').onclick = function () { modal.innerHTML = ''; };
+          document.getElementById('ro-bg').onclick = function (e) { if (e.target.id === 'ro-bg') modal.innerHTML = ''; };
+          return;
+        }
+
+        modal.innerHTML = '<div id="ro-bg" class="fixed inset-0 z-50 bg-slate-950/60 flex items-end sm:items-center justify-center">' +
+          '<div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl p-5 space-y-4 max-h-[90vh] flex flex-col">' +
+          '<div class="flex items-center justify-between border-b border-slate-100 pb-3">' +
+          '<div><h3 class="text-base font-bold text-slate-900">Đơn đặt nhận tại quán · ' + esc(orderKey) + '</h3>' +
+          '<p class="text-xs font-semibold text-amber-700">Thanh toán tại quầy khi khách đến nhận</p></div>' +
+          '<button id="ro-close" class="px-3 py-1.5 text-xs font-semibold bg-slate-100 rounded-lg">Đóng</button></div>' +
+          '<div class="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">' +
+          '<p><strong>Khách hàng:</strong> ' + esc(ord.customerName || 'Khách hàng') + '</p>' +
+          '<p><strong>Số điện thoại:</strong> <a href="tel:' + esc(ord.customerPhone || '') + '" class="text-[#0F766E] font-bold underline">' + esc(ord.customerPhone || '') + '</a></p>' +
+          '<p><strong>Thời gian đến nhận:</strong> ' + esc(ord.pickupTime || 'Sớm nhất') + '</p>' +
+          (ord.note ? '<p><strong>Ghi chú:</strong> ' + esc(ord.note) + '</p>' : '') +
+          '</div>' +
+          '<div class="flex-1 overflow-y-auto space-y-2">' +
+          (ord.items || []).map(function (i) {
+            return '<div class="flex justify-between text-sm border-b border-slate-100 pb-2"><span>' + i.qty + ' × ' + esc(i.name) + '</span><span class="tabular-nums font-bold">' + vnd(i.price * i.qty) + '</span></div>';
+          }).join('') +
+          '</div>' +
+          '<div class="pt-3 border-t border-slate-100 space-y-2.5">' +
+          '<div class="flex justify-between items-center font-bold"><span>Tổng thu tại quầy</span><span class="text-lg tabular-nums text-[#0F766E]">' + vnd(ord.totalAmount || 0) + '</span></div>' +
+          '<div class="grid grid-cols-2 gap-2">' +
+          '<button id="ro-load-pos" class="min-h-[44px] px-3 bg-white border border-slate-200 text-slate-900 text-xs font-bold rounded-xl">Nạp vào POS sửa</button>' +
+          '<button id="ro-collect" class="min-h-[44px] px-3 bg-[#0F766E] text-white text-xs font-bold rounded-xl">Đã giao &amp; Thu tiền</button>' +
+          '</div></div></div></div>';
+
+        document.getElementById('ro-close').onclick = function () { modal.innerHTML = ''; };
+        document.getElementById('ro-bg').onclick = function (e) { if (e.target.id === 'ro-bg') modal.innerHTML = ''; };
+        document.getElementById('ro-load-pos').onclick = function () {
+          posCart = (ord.items || []).map(function (it) { return Object.assign({}, it); });
+          posCustomerLabel = (ord.customerName || 'Khách đặt') + (ord.customerPhone ? ' (' + ord.customerPhone + ')' : '');
+          activeRetailOrderId = String(orderKey);
+          activeTab = 'ops';
+          modal.innerHTML = '';
+          render();
+        };
+        document.getElementById('ro-collect').onclick = async function () {
+          var inv = {
+            id: String(orderKey),
+            createdAt: new Date().toISOString(),
+            model: 'retail',
+            customerOrTable: (ord.customerName || 'Khách đặt') + (ord.customerPhone ? ' (' + ord.customerPhone + ')' : ''),
+            items: ord.items || [],
+            totalAmount: ord.totalAmount || 0,
+            totalCost: 0,
+            profit: ord.totalAmount || 0,
+            paymentMethod: 'Tiền mặt / QR tại quầy'
+          };
+          saveInvoiceLocal(inv);
+          await postGasAction({ action: 'recordInvoice', invoice: inv, clearOrderKey: String(orderKey) });
+          try {
+            var bridge = JSON.parse(localStorage.getItem(storageBridgeKey) || '{}');
+            delete bridge[String(orderKey)];
+            localStorage.setItem(storageBridgeKey, JSON.stringify(bridge));
+          } catch (e) {}
+          retailOrders = retailOrders.filter(function (o) { return String(o.orderKey || o.orderId || o.lastOrderId) !== String(orderKey); });
           modal.innerHTML = '';
           render();
         };
@@ -1561,42 +2003,214 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
         if (activeTab === 'ops') {
           if (config.model === 'retail') {
             var total = posCart.reduce(function (s, i) { return s + i.price * i.qty; }, 0);
-            root.innerHTML = '<div class="grid grid-cols-1 lg:grid-cols-12 gap-4">' +
-              '<div class="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-4 space-y-3">' +
-              '<h2 class="text-base font-bold">POS Tính tiền nhanh</h2>' +
-              '<div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">' +
-              products.map(function (p) {
-                return '<button data-pos-add="' + esc(p.id) + '" class="p-2.5 border border-slate-200 rounded-xl flex flex-col gap-2 text-left hover:border-[#0F766E]">' +
-                  (p.imageUrl ? '<img src="' + esc(p.imageUrl) + '" onerror="this.style.display=\\'none\\'" class="w-full aspect-square rounded-lg object-cover bg-slate-100" />' : '') +
-                  '<p class="text-xs font-bold text-slate-900 line-clamp-2">' + esc(p.name) + '</p>' +
-                  '<p class="text-xs font-bold tabular-nums text-[#0F766E]">' + vnd(p.price) + '</p></button>';
-              }).join('') +
-              '</div></div>' +
-              '<div class="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-4 space-y-3">' +
-              '<h2 class="text-base font-bold">Hóa đơn hiện tại</h2>' +
-              '<div class="space-y-2">' +
-              (posCart.length ? posCart.map(function (i) {
-                return '<div class="flex justify-between text-sm border-b border-slate-100 pb-2"><span>' + i.qty + ' × ' + esc(i.name) + '</span><span class="tabular-nums font-bold">' + vnd(i.price * i.qty) + '</span></div>';
-              }).join('') : '<p class="text-sm text-slate-500">Chạm sản phẩm để thêm vào hóa đơn.</p>') +
-              '</div>' +
-              '<div class="pt-3 border-t flex justify-between font-bold text-lg"><span>Tổng thu</span><span class="tabular-nums text-[#0F766E]">' + vnd(total) + '</span></div>' +
-              '<button id="pos-checkout" ' + (!posCart.length ? 'disabled' : '') + ' class="w-full min-h-[46px] bg-[#0F766E] disabled:bg-slate-200 text-white text-sm font-bold rounded-xl">Xác nhận thu tiền</button>' +
-              '</div></div>';
+            var posCats = ['Tất cả'].concat(Array.from(new Set(products.map(function (p) { return p.category || 'Chung'; }))));
+            var posFiltered = products.filter(function (p) {
+              var cOk = posCat === 'Tất cả' || (p.category || 'Chung') === posCat;
+              var q = noAccent(posSearch);
+              var sOk = !q || noAccent(p.name).indexOf(q) >= 0 || noAccent(p.sku).indexOf(q) >= 0 || noAccent(p.category).indexOf(q) >= 0;
+              return cOk && sOk;
+            });
 
-            root.querySelectorAll('[data-pos-add]').forEach(function (b) {
+            var curGasRet = getGasUrl();
+            var retNoGasNotice = !curGasRet
+              ? '<div class="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between gap-3"><p class="text-xs text-amber-900 font-medium">Chưa kết nối Google Apps Script (/exec) để nhận đơn khách đặt đến lấy.</p><button id="go-settings-ret" class="px-3 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-xl shrink-0">Cài đặt</button></div>'
+              : (gasNeedsAuthHint
+                ? '<div id="gas-auth-hint-box" class="p-3.5 bg-amber-50 border border-amber-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"><div class="space-y-1 text-xs text-amber-900"><p class="font-bold">Apps Script (/exec) chưa phản hồi JSON từ máy chủ Google</p><p>Bấm mở link bên cạnh 1 lần để kiểm tra hoặc cấp quyền <span class="font-mono">doGet</span> trong Google Sheet.</p></div><div class="flex items-center gap-2 shrink-0"><a href="' + esc(curGasRet + '?action=poll') + '" target="_blank" rel="noreferrer" class="px-3 py-2 bg-[#0F766E] text-white text-xs font-bold rounded-xl">Kiểm tra /exec</a><button id="go-settings-ret" class="px-3 py-2 bg-white border border-amber-300 text-amber-900 text-xs font-bold rounded-xl">Cài đặt</button></div></div>'
+                : '');
+
+            var pickupHTML = retailOrders.length
+              ? '<div class="bg-amber-50/80 border border-amber-300 rounded-2xl p-3.5 space-y-2.5">' +
+                '<div class="flex items-center justify-between gap-2"><h2 class="text-xs font-bold text-amber-950">Đơn khách đặt nhận tại cửa hàng (' + retailOrders.length + ')</h2>' +
+                '<button id="btn-ret-refresh" class="text-xs font-semibold text-[#0F766E] underline">Làm mới</button></div>' +
+                '<div class="grid grid-cols-1 md:grid-cols-2 gap-2.5">' +
+                retailOrders.map(function (ro) {
+                  var rKey = String(ro.orderKey || ro.orderId || ro.lastOrderId || '');
+                  return '<div class="bg-white border border-amber-200 rounded-xl p-3 space-y-2">' +
+                    '<div class="flex items-start justify-between gap-2">' +
+                    '<div class="min-w-0"><p class="text-xs font-bold text-slate-900">' + esc(ro.customerName || 'Khách hàng') + ' · <a href="tel:' + esc(ro.customerPhone || '') + '" class="text-[#0F766E] underline">' + esc(ro.customerPhone || '') + '</a></p>' +
+                    '<p class="text-[11px] font-semibold text-amber-800 mt-0.5">Nhận lúc: ' + esc(ro.pickupTime || 'Sớm nhất') + ' · ' + esc(rKey) + '</p>' +
+                    (ro.note ? '<p class="text-[11px] text-slate-600 mt-0.5">Ghi chú: ' + esc(ro.note) + '</p>' : '') +
+                    '</div><span class="text-xs font-bold tabular-nums text-[#0F766E] shrink-0">' + vnd(ro.totalAmount) + '</span></div>' +
+                    '<p class="text-[11px] text-slate-600">' + (ro.items || []).map(function (it) { return it.qty + '× ' + esc(it.name); }).join(', ') + '</p>' +
+                    '<div class="flex items-center gap-2">' +
+                    '<button data-ro-load="' + esc(rKey) + '" class="flex-1 py-1.5 px-2.5 bg-[#0F766E] text-white text-[11px] font-bold rounded-lg">Nạp vào POS</button>' +
+                    '<button data-ro-open="' + esc(rKey) + '" class="py-1.5 px-2.5 border border-slate-200 text-slate-700 text-[11px] font-semibold rounded-lg">Chi tiết</button>' +
+                    '</div></div>';
+                }).join('') +
+                '</div></div>'
+              : '';
+
+            root.innerHTML = '<div class="space-y-4">' +
+              retNoGasNotice +
+              pickupHTML +
+              '<div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">' +
+              '<div class="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-4 space-y-3">' +
+              '<div class="flex items-center justify-between gap-2"><h2 class="text-base font-bold">POS Tính tiền nhanh</h2>' +
+              '<span class="text-xs text-slate-500 tabular-nums">' + posFiltered.length + ' / ' + products.length + ' SP</span></div>' +
+              '<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">' +
+              '<input id="pos-search" type="search" value="' + esc(posSearch) + '" placeholder="Tìm sản phẩm theo tên, mã SKU..." class="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-[#0F766E]" />' +
+              '<form id="pos-sku-form" class="flex gap-1.5"><input id="pos-sku-inp" type="text" placeholder="Nhập/quét mã SKU + Enter" class="flex-1 min-w-0 px-3 py-2 text-xs font-mono border border-slate-200 rounded-xl" />' +
+              '<button type="submit" class="px-3 py-2 bg-slate-900 text-white text-xs font-bold rounded-xl shrink-0">Thêm</button></form>' +
+              '</div>' +
+              '<div class="flex items-center gap-1.5 overflow-x-auto pb-1">' +
+              posCats.map(function (c) {
+                var act = c === posCat;
+                return '<button type="button" data-pos-cat="' + esc(c) + '" class="px-3 py-1.5 text-xs rounded-xl whitespace-nowrap shrink-0 ' + (act ? 'bg-[#0F766E] text-white font-bold' : 'bg-slate-100 text-slate-700') + '">' + esc(c) + '</button>';
+              }).join('') +
+              '</div>' +
+              '<div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">' +
+              (posFiltered.length ? posFiltered.map(function (p) {
+                var isOut = p.status === 'Hết hàng' || (p.stock || 0) <= 0;
+                return '<button data-pos-add="' + esc(p.id) + '" ' + (isOut ? 'disabled' : '') + ' class="p-2.5 border border-slate-200 rounded-xl flex flex-col gap-1.5 text-left hover:border-[#0F766E] disabled:opacity-50">' +
+                  (p.imageUrl ? '<img src="' + esc(p.imageUrl) + '" onerror="this.style.display=\\'none\\'" class="w-full aspect-square rounded-lg object-cover bg-slate-100" />' : '') +
+                  '<p class="text-xs font-bold text-slate-900 leading-snug">' + esc(p.name) + '</p>' +
+                  '<p class="text-[10px] font-mono text-slate-500">' + esc(p.sku) + ' · Kho: ' + (p.stock ?? 0) + '</p>' +
+                  '<p class="text-xs font-bold tabular-nums text-[#0F766E]">' + vnd(p.price) + '</p></button>';
+              }).join('') : '<p class="col-span-full py-8 text-center text-xs text-slate-500">Không tìm thấy sản phẩm nào khớp bộ lọc.</p>') +
+              '</div></div>' +
+
+              '<div class="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-4 space-y-3 lg:sticky lg:top-16">' +
+              '<div class="flex items-center justify-between gap-2 border-b border-slate-100 pb-2.5">' +
+              '<div class="min-w-0"><h2 class="text-base font-bold">Hóa đơn hiện tại</h2>' +
+              '<p class="text-[11px] text-slate-500 truncate">' + esc(posCustomerLabel) + '</p></div>' +
+              (posCart.length ? '<button id="pos-clear-all" type="button" class="text-xs font-semibold text-red-700 shrink-0">Xóa giỏ</button>' : '') +
+              '</div>' +
+              '<div class="space-y-2.5 max-h-[45vh] overflow-y-auto">' +
+              (posCart.length ? posCart.map(function (i) {
+                return '<div class="border-b border-slate-100 pb-2.5 space-y-1.5">' +
+                  '<div class="flex items-start justify-between gap-2 text-xs">' +
+                  '<div class="min-w-0 flex-1"><p class="font-bold text-slate-900">' + esc(i.name) + '</p>' +
+                  '<p class="text-[11px] text-slate-500 tabular-nums">' + vnd(i.price) + ' / ' + esc(i.unit || 'Cái') + '</p></div>' +
+                  '<span class="tabular-nums font-bold text-slate-900 shrink-0">' + vnd(i.price * i.qty) + '</span></div>' +
+                  '<div class="flex items-center justify-between gap-2">' +
+                  '<div class="flex items-center gap-1">' +
+                  '<button type="button" data-pos-minus="' + esc(i.productId) + '" class="w-8 h-8 rounded-lg border border-slate-200 font-bold flex items-center justify-center">−</button>' +
+                  '<span class="w-6 text-center text-xs font-bold tabular-nums">' + i.qty + '</span>' +
+                  '<button type="button" data-pos-plus="' + esc(i.productId) + '" class="w-8 h-8 rounded-lg bg-[#0F766E] text-white font-bold flex items-center justify-center">+</button>' +
+                  '</div>' +
+                  '<button type="button" data-pos-rm="' + esc(i.productId) + '" class="px-2.5 h-8 rounded-lg border border-red-200 text-red-700 text-[11px] font-bold">Bỏ</button>' +
+                  '</div></div>';
+              }).join('') : '<p class="text-sm text-slate-500 py-6 text-center">Chạm sản phẩm bên trái để thêm vào hóa đơn.</p>') +
+              '</div>' +
+              '<div id="pos-qr-box" class="hidden flex-col items-center p-3 bg-slate-50 rounded-xl border border-slate-200">' +
+              '<img id="pos-qr-img" class="w-40 h-40 bg-white p-1.5 rounded-lg border border-slate-200" alt="VietQR" />' +
+              '<p class="text-[11px] text-slate-500 mt-1">' + esc(config.bank.bankShortName) + ' · ' + esc(config.bank.accountNumber) + '</p></div>' +
+              '<div class="pt-3 border-t flex justify-between font-bold text-lg"><span>Tổng thu</span><span class="tabular-nums text-[#0F766E]">' + vnd(total) + '</span></div>' +
+              '<div class="grid grid-cols-2 gap-2">' +
+              '<button id="pos-show-qr" type="button" ' + (!posCart.length ? 'disabled' : '') + ' class="min-h-[44px] px-3 bg-white border border-slate-200 disabled:opacity-50 text-slate-900 text-xs font-bold rounded-xl">Hiện VietQR</button>' +
+              '<button id="pos-checkout" type="button" ' + (!posCart.length ? 'disabled' : '') + ' class="min-h-[44px] px-3 bg-[#0F766E] disabled:bg-slate-200 text-white text-xs font-bold rounded-xl">Xác nhận thu tiền</button>' +
+              '</div></div></div></div>';
+
+            var goRetSet = document.getElementById('go-settings-ret');
+            if (goRetSet) goRetSet.onclick = function () { activeTab = 'settings'; render(); };
+            var refRetBtn = document.getElementById('btn-ret-refresh');
+            if (refRetBtn) refRetBtn.onclick = function () { pollGasOrders(true); };
+            root.querySelectorAll('[data-ro-open]').forEach(function (b) {
+              b.onclick = function () { openRetailOrderModal(b.getAttribute('data-ro-open')); };
+            });
+            root.querySelectorAll('[data-ro-load]').forEach(function (b) {
               b.onclick = function () {
-                var p = products.find(function (x) { return x.id === b.getAttribute('data-pos-add'); });
-                var f = posCart.find(function (x) { return x.productId === p.id; });
-                if (f) f.qty += 1; else posCart.push({ productId: p.id, sku: p.sku, name: p.name, price: p.price, qty: 1 });
+                var rKey = b.getAttribute('data-ro-load');
+                var ord = retailOrders.find(function (o) { return String(o.orderKey || o.orderId || o.lastOrderId) === String(rKey); });
+                if (!ord) return;
+                posCart = (ord.items || []).map(function (it) { return Object.assign({}, it); });
+                posCustomerLabel = (ord.customerName || 'Khách đặt') + (ord.customerPhone ? ' (' + ord.customerPhone + ')' : '');
+                activeRetailOrderId = String(rKey);
                 render();
               };
             });
+
+            var posSearchEl = document.getElementById('pos-search');
+            if (posSearchEl) posSearchEl.oninput = function (e) {
+              posSearch = e.target.value;
+              var pos = e.target.selectionStart;
+              render();
+              var nextInp = document.getElementById('pos-search');
+              if (nextInp) { nextInp.focus(); try { nextInp.setSelectionRange(pos, pos); } catch (err) {} }
+            };
+            var posSkuForm = document.getElementById('pos-sku-form');
+            if (posSkuForm) posSkuForm.onsubmit = function (e) {
+              e.preventDefault();
+              var val = noAccent(document.getElementById('pos-sku-inp').value);
+              if (!val) return;
+              var m = products.find(function (p) { return noAccent(p.sku) === val; });
+              if (m) {
+                var f = posCart.find(function (x) { return x.productId === m.id; });
+                if (f) f.qty += 1; else posCart.push({ productId: m.id, sku: m.sku, name: m.name, price: m.price, unit: m.unit, qty: 1 });
+                render();
+              }
+            };
+            root.querySelectorAll('[data-pos-cat]').forEach(function (b) {
+              b.onclick = function () { posCat = b.getAttribute('data-pos-cat'); render(); };
+            });
+            root.querySelectorAll('[data-pos-add]').forEach(function (b) {
+              b.onclick = function () {
+                var p = products.find(function (x) { return x.id === b.getAttribute('data-pos-add'); });
+                if (!p) return;
+                var f = posCart.find(function (x) { return x.productId === p.id; });
+                if (f) f.qty += 1; else posCart.push({ productId: p.id, sku: p.sku, name: p.name, price: p.price, unit: p.unit, qty: 1 });
+                render();
+              };
+            });
+            root.querySelectorAll('[data-pos-plus]').forEach(function (b) {
+              b.onclick = function () {
+                var f = posCart.find(function (x) { return x.productId === b.getAttribute('data-pos-plus'); });
+                if (f) f.qty += 1;
+                render();
+              };
+            });
+            root.querySelectorAll('[data-pos-minus]').forEach(function (b) {
+              b.onclick = function () {
+                var id = b.getAttribute('data-pos-minus');
+                var idx = posCart.findIndex(function (x) { return x.productId === id; });
+                if (idx >= 0) {
+                  posCart[idx].qty -= 1;
+                  if (posCart[idx].qty <= 0) posCart.splice(idx, 1);
+                }
+                render();
+              };
+            });
+            root.querySelectorAll('[data-pos-rm]').forEach(function (b) {
+              b.onclick = function () {
+                var id = b.getAttribute('data-pos-rm');
+                posCart = posCart.filter(function (x) { return x.productId !== id; });
+                render();
+              };
+            });
+            var posClrBtn = document.getElementById('pos-clear-all');
+            if (posClrBtn) posClrBtn.onclick = function () {
+              posCart = [];
+              posCustomerLabel = 'Khách tại quầy';
+              activeRetailOrderId = null;
+              render();
+            };
+            var posQrBtn = document.getElementById('pos-show-qr');
+            if (posQrBtn) posQrBtn.onclick = function () {
+              var box = document.getElementById('pos-qr-box');
+              box.classList.remove('hidden');
+              box.classList.add('flex');
+              if (window.QRCode && window.QRCode.toDataURL) {
+                window.QRCode.toDataURL(buildVietQR(total, 'POS ' + (config.shopName || '').slice(0, 12)), { width: 220, margin: 2 }, function (err, url) {
+                  if (!err) document.getElementById('pos-qr-img').src = url;
+                });
+              }
+            };
             var chk = document.getElementById('pos-checkout');
             if (chk) chk.onclick = async function () {
-              var inv = { id: 'POS-' + Date.now().toString().slice(-6), createdAt: new Date().toISOString(), model: 'retail', customerOrTable: 'Khách tại quầy', items: posCart, totalAmount: total, totalCost: 0, profit: total, paymentMethod: 'Tiền mặt / QR' };
+              var inv = { id: 'POS-' + Date.now().toString().slice(-6), createdAt: new Date().toISOString(), model: 'retail', customerOrTable: posCustomerLabel || 'Khách tại quầy', items: posCart, totalAmount: total, totalCost: 0, profit: total, paymentMethod: 'Tiền mặt / QR' };
               saveInvoiceLocal(inv);
-              await postGasAction({ action: 'recordInvoice', invoice: inv });
+              await postGasAction({ action: 'recordInvoice', invoice: inv, clearOrderKey: activeRetailOrderId || undefined });
+              if (activeRetailOrderId) {
+                try {
+                  var bridge = JSON.parse(localStorage.getItem(storageBridgeKey) || '{}');
+                  delete bridge[String(activeRetailOrderId)];
+                  localStorage.setItem(storageBridgeKey, JSON.stringify(bridge));
+                } catch (e) {}
+                retailOrders = retailOrders.filter(function (o) { return String(o.orderKey || o.orderId || o.lastOrderId) !== String(activeRetailOrderId); });
+              }
               posCart = [];
+              posCustomerLabel = 'Khách tại quầy';
+              activeRetailOrderId = null;
               render();
             };
           } else {
@@ -2234,15 +2848,10 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
       function startAdminPolling() {
         if (!isUnlocked || !config) return;
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-        if (config.model === 'fnb') {
-          pollGasOrders(true);
-          pollTimer = setInterval(function () {
-            if (!document.hidden && isUnlocked) pollGasOrders(false);
-          }, 5000);
-        } else {
-          syncStatusText = 'Chế độ Bán lẻ / POS sẵn sàng';
-          updateSyncStatusUI();
-        }
+        pollGasOrders(true);
+        pollTimer = setInterval(function () {
+          if (!document.hidden && isUnlocked) pollGasOrders(false);
+        }, 5000);
       }
 
       function stopSkuScanner() {
@@ -2280,7 +2889,7 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
       });
 
       document.addEventListener('visibilitychange', function () {
-        if (!document.hidden && isUnlocked && config && config.model === 'fnb') {
+        if (!document.hidden && isUnlocked && config) {
           pollGasOrders(false);
         }
       });

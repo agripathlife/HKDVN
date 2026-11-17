@@ -58,6 +58,12 @@ export interface CartItem {
 
 export interface TableOrder {
   tableNumber: number;
+  orderKey?: string;
+  orderType?: 'fnb_table' | 'retail_pickup';
+  customerName?: string;
+  customerPhone?: string;
+  pickupTime?: string;
+  note?: string;
   status: TableStatus;
   items: CartItem[];
   totalAmount: number;
@@ -65,6 +71,20 @@ export interface TableOrder {
   lastOrderId: string;
   paymentRequestedAt?: string;
   supportNote?: string;
+  unreadAlert?: boolean;
+}
+
+export interface RetailPickupOrder {
+  orderId: string;
+  customerName: string;
+  customerPhone: string;
+  pickupTime: string;
+  note?: string;
+  items: CartItem[];
+  totalAmount: number;
+  status: 'retail_pending' | 'completed';
+  createdAt: string;
+  updatedAt: string;
   unreadAlert?: boolean;
 }
 

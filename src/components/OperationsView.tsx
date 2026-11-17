@@ -21,6 +21,7 @@ import {
   PaymentMethod,
   ProductItem,
   ProductStatus,
+  RetailPickupOrder,
   ShopConfig,
   TableOrder,
   TableStatus,
@@ -47,10 +48,14 @@ interface OperationsViewProps {
   config: ShopConfig;
   products: ProductItem[];
   tableOrders: TableOrder[];
+  retailOrders: RetailPickupOrder[];
   onSaveInvoice: (invoice: InvoiceRecord) => Promise<void>;
   onUpdateProductStock: (items: CartItem[]) => Promise<void>;
   onSaveTableOrder: (order: TableOrder) => Promise<void>;
   onClearTableOrder: (tableNumber: number) => Promise<void>;
+  onSaveRetailOrder: (order: RetailPickupOrder) => Promise<void>;
+  onRemoveRetailOrder: (orderId: string) => Promise<void>;
+  onTransferTable: (fromTable: number, toTable: number) => Promise<void>;
   onOpenTablePreview: (tableNumber: number) => void;
 }
 
@@ -62,10 +67,14 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
   config,
   products,
   tableOrders,
+  retailOrders,
   onSaveInvoice,
   onUpdateProductStock,
   onSaveTableOrder,
   onClearTableOrder,
+  onSaveRetailOrder,
+  onRemoveRetailOrder,
+  onTransferTable,
   onOpenTablePreview,
 }) => {
   const modelProducts = useMemo(
@@ -75,8 +84,11 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
 
   // ==================== MODEL 1: RETAIL POS ====================
   const [posSearch, setPosSearch] = useState('');
+  const [posCategory, setPosCategory] = useState('Tất cả');
   const [barcodeInput, setBarcodeInput] = useState('');
   const [posCart, setPosCart] = useState<CartItem[]>([]);
+  const [posCustomerLabel, setPosCustomerLabel] = useState('Khách tại quầy');
+  const [activeRetailOrderId, setActiveRetailOrderId] = useState<string | null>(null);
   const [posMessage, setPosMessage] = useState<string | null>(null);
   const [posCheckoutOpen, setPosCheckoutOpen] = useState(false);
 
@@ -95,10 +107,15 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
   const [lastPollTime, setLastPollTime] = useState<string>('');
   const [isPolling, setIsPolling] = useState(false);
   const [confirmCollectTable, setConfirmCollectTable] = useState<TableOrder | null>(null);
+  const [transferTarget, setTransferTarget] = useState<number>(2);
   const [tableQrPreviewOpen, setTableQrPreviewOpen] = useState(false);
   const [tableQRs, setTableQRs] = useState<Array<{ table: number; url: string; qr: string }>>([]);
 
   const prevOrdersSnapshotRef = useRef<Record<number, string>>({});
+
+  useEffect(() => {
+    setTransferTarget(selectedTableNum === 1 ? 2 : 1);
+  }, [selectedTableNum]);
 
   // Stop camera on unmount
   useEffect(() => {
@@ -175,7 +192,7 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
   }, [tableOrders, audioEnabled, config.model]);
 
   useEffect(() => {
-    if (config.model !== BusinessModel.FNB || !config.infra.gasEndpointUrl) return;
+    if (!config.infra.gasEndpointUrl) return;
     let active = true;
     const gasUrl = config.infra.gasEndpointUrl;
 
@@ -187,7 +204,23 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
       if (data && !data.unchanged && data.orders) {
         if (data.updatedAt) setLastPollTime(data.updatedAt);
         for (const remote of data.orders) {
-          await onSaveTableOrder(remote);
+          if (remote.orderType === 'retail_pickup' || String(remote.orderKey || '').startsWith('DH-')) {
+            await onSaveRetailOrder({
+              orderId: remote.orderKey || remote.lastOrderId,
+              customerName: remote.customerName || 'Khách đặt hàng',
+              customerPhone: remote.customerPhone || '',
+              pickupTime: remote.pickupTime || '',
+              note: remote.note,
+              items: remote.items || [],
+              totalAmount: remote.totalAmount || 0,
+              status: 'retail_pending',
+              createdAt: remote.updatedAt || new Date().toISOString(),
+              updatedAt: remote.updatedAt || new Date().toISOString(),
+              unreadAlert: true,
+            });
+          } else if (remote.tableNumber > 0) {
+            await onSaveTableOrder(remote);
+          }
         }
       }
     };
@@ -297,6 +330,10 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
     );
   };
 
+  const removePosItem = (productId: string) => {
+    setPosCart((prev) => prev.filter((i) => i.productId !== productId));
+  };
+
   const posTotal = posCart.reduce((s, i) => s + i.price * i.qty, 0);
   const posCost = posCart.reduce((s, i) => s + i.costPrice * i.qty, 0);
 
@@ -305,7 +342,7 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
       id: generateOrderId('POS'),
       createdAt: new Date().toISOString(),
       model: BusinessModel.RETAIL,
-      customerOrTable: 'Khách tại quầy',
+      customerOrTable: posCustomerLabel || 'Khách tại quầy',
       items: posCart,
       totalAmount: posTotal,
       totalCost: posCost,
@@ -317,8 +354,23 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
     // Save immediately to IndexedDB (offline-first)
     await onSaveInvoice(invoice);
     await onUpdateProductStock(posCart);
+    if (activeRetailOrderId) {
+      await onRemoveRetailOrder(activeRetailOrderId);
+      if (config.infra.gasEndpointUrl) {
+        try {
+          await postOrderToGas(config.infra.gasEndpointUrl, 'recordInvoice', {
+            invoice,
+            clearOrderKey: activeRetailOrderId,
+          });
+        } catch {
+          // Handled via Sheets API below
+        }
+      }
+    }
     setPosCheckoutOpen(false);
     setPosCart([]);
+    setPosCustomerLabel('Khách tại quầy');
+    setActiveRetailOrderId(null);
     setPosMessage(`Thanh toán thành công ${invoice.id} · ${formatVND(invoice.totalAmount)}`);
 
     // Background sync to Google Sheets
@@ -333,13 +385,21 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
     }
   };
 
+  const posCategories = useMemo(() => {
+    const set = new Set<string>(modelProducts.map((p) => p.category));
+    return ['Tất cả', ...Array.from(set)];
+  }, [modelProducts]);
+
   const filteredPosProducts = useMemo(() => {
-    return modelProducts.filter(
-      (p) =>
+    return modelProducts.filter((p) => {
+      const catOk = posCategory === 'Tất cả' || p.category === posCategory;
+      const qOk =
         matchesVietnameseSearch(p.name, posSearch) ||
-        matchesVietnameseSearch(p.sku, posSearch)
-    );
-  }, [modelProducts, posSearch]);
+        matchesVietnameseSearch(p.sku, posSearch) ||
+        matchesVietnameseSearch(p.category, posSearch);
+      return catOk && qOk;
+    });
+  }, [modelProducts, posSearch, posCategory]);
 
   // F&B Confirm Payment handler
   const handleConfirmTablePayment = async (order: TableOrder, method: PaymentMethod) => {
@@ -405,6 +465,74 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
             </div>
           )}
         </div>
+
+        {retailOrders.length > 0 && (
+          <div className="bg-amber-50/80 border border-amber-300 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-bold text-amber-950">
+                Đơn khách đặt nhận tại cửa hàng ({retailOrders.length})
+              </h2>
+              <span className="text-xs text-amber-800">Thanh toán trực tiếp tại quầy</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {retailOrders.map((ord) => (
+                <div key={ord.orderId} className="bg-white border border-amber-200 rounded-xl p-3.5 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-bold text-slate-900">
+                        {ord.customerName} · <a href={`tel:${ord.customerPhone}`} className="text-[#0F766E] underline">{ord.customerPhone}</a>
+                      </p>
+                      <p className="text-xs font-semibold text-amber-800 mt-0.5">
+                        Hẹn đến lấy: {ord.pickupTime} · Mã {ord.orderId}
+                      </p>
+                      {ord.note && <p className="text-xs text-slate-600 mt-0.5">Ghi chú: {ord.note}</p>}
+                    </div>
+                    <span className="text-sm font-mono font-bold text-[#0F766E] shrink-0">
+                      {formatVND(ord.totalAmount)}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-600 space-y-0.5 border-t border-slate-100 pt-2">
+                    {ord.items.map((it, idx) => (
+                      <p key={idx}>{it.qty} × {it.name}</p>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPosCart(ord.items.map((it) => ({ ...it })));
+                        setPosCustomerLabel(`${ord.customerName} (${ord.customerPhone})`);
+                        setActiveRetailOrderId(ord.orderId);
+                        setPosMessage(`Đã nạp đơn ${ord.orderId} vào POS để tính tiền`);
+                      }}
+                      className="flex-1 py-2 px-3 bg-[#0F766E] text-white text-xs font-bold rounded-lg cursor-pointer"
+                    >
+                      Nạp vào POS tính tiền
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await onRemoveRetailOrder(ord.orderId);
+                        if (config.infra.gasEndpointUrl) {
+                          try {
+                            await postOrderToGas(config.infra.gasEndpointUrl, 'dismissRetailOrder', {
+                              clearOrderKey: ord.orderId,
+                            });
+                          } catch {
+                            // Ignored
+                          }
+                        }
+                      }}
+                      className="py-2 px-3 border border-slate-200 text-slate-600 text-xs font-semibold rounded-lg cursor-pointer"
+                    >
+                      Hủy đơn
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left: Barcode Camera + Quick Product Search */}
@@ -482,9 +610,26 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                   type="search"
                   value={posSearch}
                   onChange={(e) => setPosSearch(e.target.value)}
-                  placeholder="Tìm nhanh sản phẩm theo tên hoặc mã..."
+                  placeholder="Tìm nhanh sản phẩm theo tên, mã SKU hoặc danh mục..."
                   className="w-full pl-10 pr-4 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#0F766E]/25 focus:border-[#0F766E]"
                 />
+              </div>
+
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                {posCategories.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setPosCategory(cat)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap shrink-0 cursor-pointer ${
+                      posCategory === cat
+                        ? 'bg-[#0F766E] text-white font-semibold'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -553,22 +698,32 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                       <button
                         type="button"
                         onClick={() => updatePosQty(item.productId, -1)}
-                        className="w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50"
+                        aria-label="Giảm số lượng"
+                        className="w-8 h-8 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50"
                       >
                         <Minus className="w-3.5 h-3.5" />
                       </button>
-                      <span className="w-7 text-center text-sm font-mono tabular-nums font-bold">
+                      <span className="w-6 text-center text-sm font-mono tabular-nums font-bold">
                         {item.qty}
                       </span>
                       <button
                         type="button"
                         onClick={() => updatePosQty(item.productId, 1)}
-                        className="w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50"
+                        aria-label="Tăng số lượng"
+                        className="w-8 h-8 rounded-lg border border-slate-200 flex items-center justify-center hover:bg-slate-50"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => removePosItem(item.productId)}
+                        aria-label="Bỏ sản phẩm"
+                        className="px-2 h-8 rounded-lg border border-red-200 text-red-700 text-xs font-semibold hover:bg-red-50"
+                      >
+                        Bỏ
+                      </button>
                     </div>
-                    <span className="w-24 text-right text-sm font-mono tabular-nums font-bold text-slate-900">
+                    <span className="w-20 text-right text-sm font-mono tabular-nums font-bold text-slate-900">
                       {formatVND(item.price * item.qty)}
                     </span>
                   </div>
@@ -799,6 +954,50 @@ export const OperationsView: React.FC<OperationsViewProps> = ({
                   <span className="font-mono tabular-nums text-[#0F766E]">
                     {formatVND(selectedOrder.totalAmount)}
                   </span>
+                </div>
+
+                {/* Chuyển bàn sang bàn khác */}
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                  <p className="text-xs font-bold text-slate-700">Chuyển bàn / Gộp bàn</p>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={transferTarget}
+                      onChange={(e) => setTransferTarget(Number(e.target.value))}
+                      className="flex-1 min-w-0 px-3 py-2 text-xs font-semibold bg-white border border-slate-200 rounded-lg"
+                    >
+                      {Array.from({ length: config.tableCount }, (_, idx) => idx + 1)
+                        .filter((n) => n !== selectedTableNum)
+                        .map((n) => {
+                          const targetOcc = tableOrders.some((t) => t.tableNumber === n && t.items.length > 0);
+                          return (
+                            <option key={n} value={n}>
+                              Bàn {n} {targetOcc ? '(Đang có khách · Gộp)' : '(Trống)'}
+                            </option>
+                          );
+                        })}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const dest = transferTarget;
+                        await onTransferTable(selectedTableNum, dest);
+                        if (config.infra.gasEndpointUrl) {
+                          try {
+                            await postOrderToGas(config.infra.gasEndpointUrl, 'transferTable', {
+                              fromTable: selectedTableNum,
+                              toTable: dest,
+                            });
+                          } catch {
+                            // Local IndexedDB already transferred
+                          }
+                        }
+                        setSelectedTableNum(dest);
+                      }}
+                      className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg shrink-0 cursor-pointer"
+                    >
+                      Chuyển bàn
+                    </button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
