@@ -4,14 +4,23 @@ import {
   Cloud,
   Database,
   ExternalLink,
+  Eye,
+  EyeOff,
   FolderGit2,
+  KeyRound,
   Loader2,
+  RefreshCw,
   ShoppingBag,
   Store,
   UtensilsCrossed,
 } from 'lucide-react';
 import { BusinessModel, ProductItem, ShopConfig } from '../types';
 import { HERO_IMAGE_PATH } from '../utils/db';
+import {
+  generatePasscodeSalt,
+  generateRandom8DigitPasscode,
+  hashAdminPasscode,
+} from '../utils/passcode';
 import { VIETNAM_BANKS } from '../utils/vietqr';
 import {
   GitHubUser,
@@ -44,6 +53,11 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const [draft, setDraft] = useState<ShopConfig>(config);
   const [patInput, setPatInput] = useState(githubToken);
   const [repoName, setRepoName] = useState(config.infra.githubRepo || 'hkdvn-shop');
+  const [passcodeInput, setPasscodeInput] = useState<string>(() =>
+    config.adminPasscodeHash ? '' : generateRandom8DigitPasscode()
+  );
+  const [showPasscode, setShowPasscode] = useState(true);
+  const [passcodeError, setPasscodeError] = useState<string | null>(null);
   const [ghError, setGhError] = useState<string | null>(null);
   const [verifyingGh, setVerifyingGh] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
@@ -59,6 +73,31 @@ export const PortalView: React.FC<PortalViewProps> = ({
     setPatInput(githubToken);
   }, [githubToken]);
 
+  const applyPasscodeToDraft = (): ShopConfig | null => {
+    const clean = passcodeInput.replace(/\D/g, '');
+    if (clean.length > 0 && clean.length !== 8) {
+      setPasscodeError('Mã khóa Admin phải gồm đúng 8 chữ số (0–9).');
+      return null;
+    }
+    if (!draft.adminPasscodeHash && clean.length !== 8) {
+      setPasscodeError('Vui lòng nhập hoặc tạo Mã khóa Admin gồm đúng 8 chữ số.');
+      return null;
+    }
+    setPasscodeError(null);
+    if (clean.length === 8) {
+      const salt = generatePasscodeSalt();
+      const hash = hashAdminPasscode(clean, salt);
+      const next: ShopConfig = {
+        ...draft,
+        adminPasscodeSalt: salt,
+        adminPasscodeHash: hash,
+      };
+      setDraft(next);
+      return next;
+    }
+    return draft;
+  };
+
   const handleSelectModel = async (model: BusinessModel) => {
     const next = { ...draft, model };
     setDraft(next);
@@ -67,9 +106,11 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
   const handleSaveShopInfo = async (e: React.FormEvent) => {
     e.preventDefault();
+    const prepared = applyPasscodeToDraft();
+    if (!prepared) return;
     setSavingConfig(true);
     try {
-      await onUpdateConfig(draft);
+      await onUpdateConfig(prepared);
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2200);
     } finally {
@@ -97,22 +138,25 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
   const runProvisioning = async () => {
     setConfirmProvisionOpen(false);
+    const prepared = applyPasscodeToDraft();
+    if (!prepared) return;
+
     setIsProvisioning(true);
     setProvisionStatus('running');
     setProvisionDetail('Đang tạo kho lưu trữ, nén ảnh WebP và xuất bản giao diện cửa hàng lên GitHub Pages...');
 
     try {
-      const modelProducts = products.filter((p) => p.model === draft.model);
+      const modelProducts = products.filter((p) => p.model === prepared.model);
       const ghRes = await provisionGitHubStorefront(
         githubToken,
         repoName,
-        draft,
+        prepared,
         modelProducts
       );
       const updatedConfig: ShopConfig = {
-        ...draft,
+        ...prepared,
         infra: {
-          ...draft.infra,
+          ...prepared.infra,
           githubOwner: ghRes.owner,
           githubRepo: ghRes.repo,
           githubPagesUrl: ghRes.pagesUrl,
@@ -520,6 +564,59 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 className="w-full px-3 py-2 text-sm font-mono tabular-nums border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0F766E]/25 focus:border-[#0F766E]"
               />
             </div>
+
+            <div className="sm:col-span-2 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-xs font-semibold text-slate-900 inline-flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-[#0F766E]" />
+                  <span>Mã khóa bảo vệ trang Quản lý (Passcode 8 chữ số)</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPasscodeInput(generateRandom8DigitPasscode());
+                    setShowPasscode(true);
+                    setPasscodeError(null);
+                  }}
+                  className="text-xs font-semibold text-[#0F766E] hover:underline inline-flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Tạo ngẫu nhiên 8 số</span>
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type={showPasscode ? 'text' : 'password'}
+                  inputMode="numeric"
+                  maxLength={8}
+                  value={passcodeInput}
+                  onChange={(e) => {
+                    setPasscodeInput(e.target.value.replace(/\D/g, '').slice(0, 8));
+                    setPasscodeError(null);
+                  }}
+                  placeholder={
+                    draft.adminPasscodeHash
+                      ? 'Đã đặt mã khóa (nhập 8 số mới nếu muốn đổi)'
+                      : 'Nhập đúng 8 chữ số...'
+                  }
+                  className="flex-1 min-w-0 px-3 py-2 text-sm font-mono tracking-widest border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#0F766E]/25 focus:border-[#0F766E]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPasscode((s) => !s)}
+                  aria-label={showPasscode ? 'Ẩn mã khóa' : 'Hiện mã khóa'}
+                  className="min-h-[38px] min-w-[38px] px-2.5 bg-white border border-slate-200 rounded-lg text-slate-600 hover:text-slate-900 flex items-center justify-center cursor-pointer"
+                >
+                  {showPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              {passcodeError && (
+                <p className="text-xs font-medium text-red-700">{passcodeError}</p>
+              )}
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                Khách hàng mở nhầm link <span className="font-mono">admin.html</span> sẽ bị chặn bởi màn hình khóa này. Mã được băm SHA-256 trước khi đẩy lên GitHub.
+              </p>
+            </div>
           </div>
 
           <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
@@ -534,7 +631,10 @@ export const PortalView: React.FC<PortalViewProps> = ({
             <button
               type="button"
               disabled={isProvisioning || !githubToken || !githubUser}
-              onClick={() => setConfirmProvisionOpen(true)}
+              onClick={() => {
+                const prepared = applyPasscodeToDraft();
+                if (prepared) setConfirmProvisionOpen(true);
+              }}
               className="px-5 py-2.5 min-h-[42px] bg-[#0F766E] hover:bg-[#0D655E] disabled:bg-slate-300 text-white text-sm font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer inline-flex items-center gap-2"
             >
               {isProvisioning && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -581,6 +681,11 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 <p className="text-xs text-slate-600 leading-relaxed">
                   Hãy chuyển sang <strong>Trang Quản lý Cửa hàng</strong> và mở mục <strong>Cài đặt</strong> để đăng nhập Google, khởi tạo Google Sheets + Google Apps Script đồng bộ đơn hàng (lần đầu GitHub Pages cần 30–60 giây để xuất bản).
                 </p>
+                {passcodeInput.length === 8 && (
+                  <p className="text-xs text-slate-800 bg-white/80 border border-teal-200 rounded-lg px-3 py-1.5 inline-block">
+                    Mã khóa mở Trang Quản lý của bạn: <strong className="font-mono text-[#0F766E] tracking-widest">{passcodeInput}</strong> (hãy lưu lại trước khi mở trang mới)
+                  </p>
+                )}
                 {githubToken && (
                   <label className="inline-flex items-center gap-2 text-xs text-slate-800 font-medium cursor-pointer select-none">
                     <input

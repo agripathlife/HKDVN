@@ -1,6 +1,7 @@
 import firebaseConfig from '../../firebase-applet-config.json';
 import { ShopConfig } from '../types';
 import { VIETNAM_BANKS } from '../utils/vietqr';
+import { SHA256_INLINE_SCRIPT } from '../utils/passcode';
 import { generateAppsScriptCode } from './googleWorkspace';
 
 export function buildTenantStorefrontHTML(config: ShopConfig): string {
@@ -381,6 +382,116 @@ export function buildTenantStorefrontHTML(config: ShopConfig): string {
         document.getElementById('btn-support-pay').onclick = openSupportAndPaySheet;
       }
 
+      function openProductDetailModal(productId) {
+        var p = products.find(function (x) { return x.id === productId; });
+        if (!p) return;
+        var root = document.getElementById('modal-root');
+        var out = p.status === 'Hết hàng' || p.stock <= 0;
+
+        function renderDetailBody() {
+          var cur = config.model === 'retail'
+            ? (function () { var f = bag.find(function (x) { return x.productId === p.id; }); return { qty: f ? f.qty : 0, note: '' }; })()
+            : (pendingCart[p.id] || { qty: 0, note: '' });
+          var imgHTML = p.imageUrl
+            ? '<img src="' + esc(p.imageUrl) + '" data-detail-fb="' + esc(p.name) + '" alt="' + esc(p.name) + '" class="w-full h-full object-cover" />'
+            : fallbackThumbHTML(p.name);
+
+          root.innerHTML = '<div id="pd-backdrop" class="fixed inset-0 z-50 bg-slate-950/60 flex items-end sm:items-center justify-center p-0 sm:p-4">' +
+            '<div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl overflow-hidden max-h-[90vh] flex flex-col shadow-xl">' +
+            '<div class="relative aspect-[4/3] bg-slate-100 shrink-0">' + imgHTML +
+            '<button id="pd-close" type="button" class="absolute top-3 right-3 px-3 py-1.5 bg-white/95 text-slate-800 text-xs font-bold rounded-xl shadow">Đóng</button>' +
+            '</div>' +
+            '<div class="p-5 overflow-y-auto space-y-4">' +
+            '<div>' +
+            '<div class="flex items-center justify-between gap-2 text-xs text-slate-500">' +
+            '<span>' + esc(p.category) + (p.sku ? ' · SKU ' + esc(p.sku) : '') + '</span>' +
+            '<span class="font-semibold ' + (out ? 'text-red-700' : 'text-emerald-700') + '">' + (out ? 'Hết hàng' : 'Còn ' + (p.stock || 0) + ' ' + esc(p.unit || 'Phần')) + '</span>' +
+            '</div>' +
+            '<h3 class="text-lg font-bold text-slate-900 mt-1">' + esc(p.name) + '</h3>' +
+            '<p class="text-xl font-bold tabular-nums text-[#0F766E] mt-1">' + vnd(p.price) + '<span class="text-xs font-normal text-slate-500"> / ' + esc(p.unit || 'Phần') + '</span></p>' +
+            '<div class="mt-3 p-3.5 bg-slate-50 border border-slate-200/80 rounded-xl">' +
+            '<p class="text-xs font-semibold text-slate-500 mb-1">Mô tả chi tiết</p>' +
+            '<p class="text-sm text-slate-700 leading-relaxed whitespace-pre-line">' + esc(p.description || 'Món ăn / sản phẩm đặc trưng tại cửa hàng.') + '</p>' +
+            '</div></div>' +
+            '<div class="space-y-3 pt-1">' +
+            '<div class="flex items-center justify-between gap-3">' +
+            '<span class="text-xs font-semibold text-slate-700">Số lượng chọn</span>' +
+            '<div class="flex items-center gap-2">' +
+            '<button id="pd-minus" type="button" ' + (cur.qty <= 0 ? 'disabled' : '') + ' class="w-10 h-10 rounded-xl border border-slate-200 disabled:opacity-40 text-slate-800 font-bold flex items-center justify-center">−</button>' +
+            '<span class="w-8 text-center text-base font-bold tabular-nums">' + cur.qty + '</span>' +
+            '<button id="pd-plus" type="button" ' + (out ? 'disabled' : '') + ' class="w-10 h-10 rounded-xl bg-[#0F766E] disabled:bg-slate-200 text-white font-bold flex items-center justify-center">+</button>' +
+            '</div></div>' +
+            (config.model !== 'retail'
+              ? '<input id="pd-note" type="text" value="' + esc(cur.note) + '" placeholder="Ghi chú riêng cho món (vd: ít đá, không hành)..." class="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-[#0F766E]" />'
+              : '') +
+            '<button id="pd-done" type="button" ' + (out && cur.qty === 0 ? 'disabled' : '') + ' class="w-full min-h-[46px] bg-[#0F766E] disabled:bg-slate-200 text-white text-sm font-bold rounded-xl">' +
+            (cur.qty > 0 ? 'Xác nhận (' + cur.qty + ' · ' + vnd(p.price * cur.qty) + ')' : (out ? 'Món tạm hết hàng' : '+ Thêm 1 vào đơn')) +
+            '</button></div></div></div></div>';
+
+          var fbImg = root.querySelector('img[data-detail-fb]');
+          if (fbImg) {
+            fbImg.onerror = function () {
+              if (fbImg.parentElement) fbImg.parentElement.innerHTML = fallbackThumbHTML(fbImg.getAttribute('data-detail-fb'));
+            };
+          }
+          document.getElementById('pd-close').onclick = function () { root.innerHTML = ''; };
+          document.getElementById('pd-backdrop').onclick = function (e) { if (e.target.id === 'pd-backdrop') root.innerHTML = ''; };
+
+          var noteInp = document.getElementById('pd-note');
+          if (noteInp) {
+            noteInp.oninput = function (e) {
+              if (!pendingCart[p.id]) pendingCart[p.id] = { qty: 0, note: e.target.value };
+              else pendingCart[p.id].note = e.target.value;
+            };
+          }
+
+          document.getElementById('pd-plus').onclick = function () {
+            if (config.model === 'retail') {
+              var found = bag.find(function (x) { return x.productId === p.id; });
+              if (found) found.qty += 1;
+              else bag.push({ productId: p.id, sku: p.sku, name: p.name, price: p.price, costPrice: p.costPrice || 0, unit: p.unit, qty: 1, imageUrl: p.imageUrl });
+              renderHeaderAndCats();
+            } else {
+              var c = pendingCart[p.id] || { qty: 0, note: '' };
+              c.qty += 1;
+              pendingCart[p.id] = c;
+            }
+            renderMenu();
+            renderDock();
+            renderDetailBody();
+          };
+
+          document.getElementById('pd-minus').onclick = function () {
+            if (config.model === 'retail') {
+              var idx = bag.findIndex(function (x) { return x.productId === p.id; });
+              if (idx >= 0) {
+                bag[idx].qty -= 1;
+                if (bag[idx].qty <= 0) bag.splice(idx, 1);
+              }
+              renderHeaderAndCats();
+            } else {
+              var c = pendingCart[p.id];
+              if (c) {
+                c.qty -= 1;
+                if (c.qty <= 0) delete pendingCart[p.id];
+              }
+            }
+            renderMenu();
+            renderDock();
+            renderDetailBody();
+          };
+
+          document.getElementById('pd-done').onclick = function () {
+            if (cur.qty === 0 && !out) {
+              document.getElementById('pd-plus').click();
+            }
+            root.innerHTML = '';
+          };
+        }
+
+        renderDetailBody();
+      }
+
       function renderMenu() {
         var app = document.getElementById('app');
         var list = products.filter(function (p) {
@@ -405,14 +516,15 @@ export function buildTenantStorefrontHTML(config: ShopConfig): string {
               : fallbackThumbHTML(p.name);
 
             return '<article class="bg-white border border-slate-200/90 rounded-2xl overflow-hidden flex flex-col">' +
-              '<div class="relative aspect-[4/3] bg-slate-100 overflow-hidden">' + imgHTML +
+              '<div data-detail="' + esc(p.id) + '" class="relative aspect-[4/3] bg-slate-100 overflow-hidden cursor-pointer">' + imgHTML +
               (cur.qty > 0 ? '<span class="absolute top-2 right-2 px-2 py-0.5 bg-[#0F766E] text-white text-xs font-bold rounded-lg shadow">×' + cur.qty + '</span>' : '') +
               '</div>' +
-              '<div class="p-3 flex-1 flex flex-col justify-between gap-2">' +
-              '<div>' +
+              '<div class="p-3 flex-1 flex flex-col justify-between gap-2.5">' +
+              '<div data-detail="' + esc(p.id) + '" class="cursor-pointer">' +
               '<p class="text-[11px] text-slate-500 truncate">' + esc(p.category) + (out ? ' · Hết hàng' : '') + '</p>' +
-              '<h2 class="text-[13px] sm:text-sm font-bold text-slate-900 leading-snug line-clamp-2 mt-0.5">' + esc(p.name) + '</h2>' +
-              (p.description ? '<p class="text-[11px] text-slate-500 mt-1 line-clamp-1">' + esc(p.description) + '</p>' : '') +
+              '<h2 class="text-[13px] sm:text-sm font-bold text-slate-900 leading-snug mt-0.5">' + esc(p.name) + '</h2>' +
+              (p.description ? '<p class="text-xs text-slate-600 mt-1.5 leading-relaxed whitespace-pre-line">' + esc(p.description) + '</p>' : '') +
+              '<p class="text-[11px] font-semibold text-[#0F766E] mt-1">Chạm xem chi tiết</p>' +
               '</div>' +
               '<div class="space-y-2 pt-1">' +
               '<div class="flex items-center justify-between gap-1.5">' +
@@ -434,6 +546,12 @@ export function buildTenantStorefrontHTML(config: ShopConfig): string {
           '</div>';
 
         bindImages();
+
+        app.querySelectorAll('[data-detail]').forEach(function (el) {
+          el.onclick = function () {
+            openProductDetailModal(el.getAttribute('data-detail'));
+          };
+        });
 
         app.querySelectorAll('[data-plus]').forEach(function (btn) {
           btn.onclick = function () {
@@ -544,14 +662,17 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
         <p id="sync-status-line" class="text-[11px] text-slate-500 truncate">Đang kết nối dữ liệu...</p>
       </div>
 
-      <nav class="hidden md:flex items-center gap-1 text-xs font-semibold">
+      <nav id="desktop-nav" class="hidden md:flex items-center gap-1 text-xs font-semibold">
         <button data-tab="ops" class="desktop-tab px-3 py-2 rounded-lg bg-teal-50 text-[#0F766E]">Quầy &amp; Bàn</button>
         <button data-tab="catalog" class="desktop-tab px-3 py-2 rounded-lg text-slate-600 hover:bg-slate-100">Sản phẩm</button>
         <button data-tab="revenue" class="desktop-tab px-3 py-2 rounded-lg text-slate-600 hover:bg-slate-100">Doanh thu</button>
         <button data-tab="settings" class="desktop-tab px-3 py-2 rounded-lg text-slate-600 hover:bg-slate-100">Cài đặt</button>
       </nav>
 
-      <div class="flex items-center gap-1.5 shrink-0">
+      <div id="admin-header-actions" class="flex items-center gap-1.5 shrink-0">
+        <button id="btn-lock-admin" type="button" title="Khóa màn hình quản lý" aria-label="Khóa màn hình quản lý" class="hidden w-10 h-10 rounded-xl border border-slate-200 bg-white text-slate-700 flex items-center justify-center hover:bg-slate-50">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </button>
         <button id="btn-sound" type="button" aria-label="Bật hoặc tắt âm báo" class="w-10 h-10 rounded-xl border border-slate-200 bg-white text-slate-700 flex items-center justify-center hover:bg-slate-50"></button>
         <button id="btn-bell" type="button" aria-label="Thông báo yêu cầu" class="relative w-10 h-10 rounded-xl border border-slate-200 bg-white text-slate-800 flex items-center justify-center hover:bg-slate-50">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
@@ -564,7 +685,7 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
   <div id="live-alert-banner" class="no-print max-w-6xl w-full mx-auto px-3.5 sm:px-5"></div>
   <main id="admin-app" class="flex-1 max-w-6xl w-full mx-auto px-3.5 sm:px-5 py-4 pb-24 md:pb-10"></main>
 
-  <nav class="no-print md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200 grid grid-cols-4 h-16">
+  <nav id="mobile-bottom-nav" class="no-print md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200 grid grid-cols-4 h-16">
     <button data-tab="ops" class="mobile-tab flex flex-col items-center justify-center gap-1 text-[11px] font-semibold text-[#0F766E]">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
       <span>Quầy &amp; Bàn</span>
@@ -587,6 +708,7 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
 
   <script>
     (function () {
+      ${SHA256_INLINE_SCRIPT}
       var FIREBASE_CFG = ${embeddedFirebase};
       var BANKS = ${embeddedBanks};
       var GAS_CODE_TEMPLATE = ${embeddedGasTemplate};
@@ -605,6 +727,7 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
       var invoices = JSON.parse(localStorage.getItem('hkdvn_tenant_invoices') || '[]');
       var ghStorageKey = 'hkdvn_tenant_gh_token_' + location.pathname;
       var infraStorageKey = 'hkdvn_tenant_infra_' + location.pathname;
+      var unlockStorageKey = 'hkdvn_admin_unlock_' + location.pathname;
       var storageBridgeKey = 'hkdvn_live_bridge_' + location.pathname.replace(/admin\\.html$/, '').replace(/[^a-zA-Z0-9]/g, '_');
 
       var ghToken = '';
@@ -632,11 +755,16 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
       var soundEnabled = true;
       var syncStatusText = 'Đang kiểm tra kết nối...';
       var syncHasError = false;
+      var gasNeedsAuthHint = false;
       var pendingDeleteId = null;
       var editingProdId = null;
       var catalogSearch = '';
       var scanningSku = false;
       var skuStream = null;
+
+      var isUnlocked = false;
+      var lockError = '';
+      var showLockPasscode = false;
 
       // Firebase Auth & Google Workspace state (access token kept strictly in memory)
       var fbAuth = null;
@@ -835,47 +963,88 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
         } catch (e) { return []; }
       }
 
+      function pollViaJsonp(fullUrl) {
+        return new Promise(function (resolve, reject) {
+          var cbName = '__hkdvnGasCb_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+          var script = document.createElement('script');
+          var timer = setTimeout(function () {
+            cleanup();
+            reject(new Error('JSONP timeout'));
+          }, 6500);
+          function cleanup() {
+            clearTimeout(timer);
+            try { delete window[cbName]; } catch (e) { window[cbName] = undefined; }
+            if (script.parentNode) script.parentNode.removeChild(script);
+          }
+          window[cbName] = function (data) {
+            cleanup();
+            resolve(data);
+          };
+          script.onerror = function () {
+            cleanup();
+            reject(new Error('JSONP load failed'));
+          };
+          script.src = fullUrl + (fullUrl.indexOf('?') >= 0 ? '&' : '?') + 'callback=' + encodeURIComponent(cbName);
+          document.head.appendChild(script);
+        });
+      }
+
       async function pollGasOrders(forceFull) {
+        if (!isUnlocked) return;
         var url = getGasUrl();
         if (!url) {
           var localOrders = readLiveBridgeOrders();
           if (localOrders.length) applyIncomingOrders(localOrders);
           syncStatusText = 'Chưa có Google Apps Script (/exec) — mở Cài đặt để khởi tạo';
           syncHasError = true;
+          gasNeedsAuthHint = false;
           updateSyncStatusUI();
           return;
         }
+        var sinceParam = (!forceFull && firstPollDone && lastPollSince) ? ('&since=' + encodeURIComponent(lastPollSince)) : '';
+        var fullUrl = url + '?action=poll' + sinceParam + '&_=' + Date.now();
+        var data = null;
         try {
           // IMPORTANT: Do NOT pass { cache: 'no-store' } on cross-origin Google Apps Script URLs
           // because Cache-Control/Pragma triggers CORS preflight which Apps Script rejects.
-          var sinceParam = (!forceFull && firstPollDone && lastPollSince) ? ('&since=' + encodeURIComponent(lastPollSince)) : '';
-          var res = await fetch(url + '?action=poll' + sinceParam + '&_=' + Date.now());
+          var res = await fetch(fullUrl);
           var txt = await res.text();
-          var data = null;
           try {
             data = JSON.parse(txt);
           } catch (parseErr) {
-            syncStatusText = 'Apps Script chưa mở quyền "Bất kỳ ai" (đang trả về trang đăng nhập)';
+            syncStatusText = 'Apps Script cần cấp quyền chạy lần đầu hoặc bật quyền "Bất kỳ ai"';
             syncHasError = true;
+            gasNeedsAuthHint = true;
             updateSyncStatusUI();
             return;
           }
-          syncStatusText = 'Đã đồng bộ lúc ' + new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-          syncHasError = false;
-          updateSyncStatusUI();
-          if (data && data.unchanged) {
-            firstPollDone = true;
-            if (data.updatedAt) lastPollSince = data.updatedAt;
+        } catch (fetchErr) {
+          try {
+            data = await pollViaJsonp(fullUrl);
+          } catch (jsonpErr) {
+            syncStatusText = 'Apps Script chưa phản hồi JSON — bấm vào Cài đặt để mở cấp quyền lần đầu';
+            syncHasError = true;
+            gasNeedsAuthHint = true;
+            updateSyncStatusUI();
+            if (activeTab === 'ops' || activeTab === 'settings') {
+              var bannerCheck = document.getElementById('gas-auth-hint-box');
+              if (!bannerCheck) render();
+            }
             return;
           }
-          if (data && Array.isArray(data.orders)) {
-            lastPollSince = data.updatedAt || '__EMPTY__';
-            applyIncomingOrders(data.orders);
-          }
-        } catch (e) {
-          syncStatusText = 'Không thể kết nối tới Apps Script — kiểm tra lại đường dẫn /exec trong Cài đặt';
-          syncHasError = true;
-          updateSyncStatusUI();
+        }
+        syncStatusText = 'Đã đồng bộ lúc ' + new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        syncHasError = false;
+        gasNeedsAuthHint = false;
+        updateSyncStatusUI();
+        if (data && data.unchanged) {
+          firstPollDone = true;
+          if (data.updatedAt) lastPollSince = data.updatedAt;
+          return;
+        }
+        if (data && Array.isArray(data.orders)) {
+          lastPollSince = data.updatedAt || '__EMPTY__';
+          applyIncomingOrders(data.orders);
         }
       }
 
@@ -1080,7 +1249,10 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
             '02. Sheets: Đã tạo 5 trang dữ liệu',
             '03. Apps Script: Đã triển khai thành công ' + webUrl
           ];
-          pollGasOrders();
+          await pollGasOrders(true);
+          if (gasNeedsAuthHint) {
+            gasSetupLog.push('Bước kích hoạt: Hãy bấm "Mở kiểm tra & cấp quyền Apps Script (/exec)" ở mục 2 bên dưới để xác nhận quyền chạy lần đầu.');
+          }
         } catch (err) {
           showGasGuide = true;
           gasSetupLog.push('Bước 03 (Apps Script): ' + (err && err.message ? err.message : 'Chưa triển khai tự động được.'));
@@ -1455,9 +1627,12 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
                 '<p class="text-base font-bold tabular-nums mt-1.5 text-slate-900">' + vnd(ord ? ord.totalAmount : 0) + '</p></button>';
             }).join('');
 
-            var noGasNotice = !getGasUrl()
+            var curGasOps = getGasUrl();
+            var noGasNotice = !curGasOps
               ? '<div class="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between gap-3"><p class="text-xs text-amber-900 font-medium">Chưa kết nối Google Apps Script (/exec) để nhận đơn gọi món từ khách.</p><button id="go-settings-ops" class="px-3 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-xl shrink-0">Cài đặt ngay</button></div>'
-              : '';
+              : (gasNeedsAuthHint
+                ? '<div id="gas-auth-hint-box" class="p-3.5 bg-amber-50 border border-amber-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"><div class="space-y-1 text-xs text-amber-900"><p class="font-bold">Apps Script (/exec) chưa phản hồi JSON từ máy chủ Google</p><p>Bấm mở link bên cạnh 1 lần để kiểm tra hoặc cấp quyền <span class="font-mono">doGet</span> trong Google Sheet (Quyền truy cập: <strong>Bất kỳ ai</strong>).</p></div><div class="flex items-center gap-2 shrink-0"><a href="' + esc(curGasOps + '?action=poll') + '" target="_blank" rel="noreferrer" class="px-3 py-2 bg-[#0F766E] text-white text-xs font-bold rounded-xl">Kiểm tra /exec</a><button id="go-settings-ops" class="px-3 py-2 bg-white border border-amber-300 text-amber-900 text-xs font-bold rounded-xl">Cài đặt</button></div></div>'
+                : '');
 
             root.innerHTML = '<div class="space-y-4">' +
               noGasNotice +
@@ -1808,6 +1983,13 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
             '<p class="text-xs text-slate-500">Đường dẫn này dùng chung cho cả Trang khách (gửi đơn) và Trang quản lý (nhận chuông báo đơn). Khi lưu kèm GitHub Token, hệ thống sẽ tự đồng bộ sang tệp <span class="font-mono">config.json</span>.</p>' +
             '<input id="cfg-gas" type="url" value="' + esc(curGas) + '" placeholder="https://script.google.com/macros/s/.../exec" class="w-full px-3.5 py-2.5 text-xs font-mono border border-slate-200 rounded-xl" />' +
             '<button id="btn-save-gas" class="w-full min-h-[42px] px-4 bg-[#0F766E] text-white text-xs font-bold rounded-xl">Lưu đường dẫn &amp; Kiểm tra kết nối</button>' +
+            (curGas && (syncHasError || gasNeedsAuthHint)
+              ? '<div id="gas-auth-hint-box" class="p-3.5 bg-amber-50 border border-amber-300 rounded-xl space-y-2 text-xs text-amber-900 leading-relaxed">' +
+                '<p class="font-bold">Lưu ý kích hoạt lần đầu cho Apps Script vừa tạo:</p>' +
+                '<p>1. Bấm mở trực tiếp link sau: <a href="' + esc(curGas + '?action=poll') + '" target="_blank" rel="noreferrer" class="text-[#0F766E] font-bold underline">Mở kiểm tra &amp; cấp quyền Apps Script (/exec)</a></p>' +
+                '<p>2. Nếu hiện chữ <span class="font-mono">{"unchanged":false,...}</span> thì quay lại đây bấm <strong>Lưu đường dẫn &amp; Kiểm tra kết nối</strong>. Nếu Google yêu cầu cấp quyền, hãy mở Google Sheet → <strong>Tiện ích mở rộng → Apps Script → Chạy thử hàm doGet → Cho phép</strong> và đảm bảo bản triển khai chọn Quyền truy cập: <strong>Bất kỳ ai</strong>.</p>' +
+                '</div>'
+              : '') +
             '<p id="gas-test-msg" class="text-xs text-slate-600"></p></section>' +
 
             // 3. GitHub Token (Lưu cục bộ)
@@ -1837,6 +2019,17 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
             '</div>' +
             '<button type="submit" class="w-full min-h-[44px] bg-[#0F766E] text-white text-xs font-bold rounded-xl">Lưu thông tin lên GitHub (config.json)</button>' +
             '<p id="sc-msg" class="text-xs font-medium text-[#0F766E]"></p></form>' +
+
+            // 5. Mã khóa bảo mật Admin (Passcode 8 số)
+            '<form id="passcode-cfg-form" class="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 space-y-3">' +
+            '<div class="flex items-center justify-between gap-2">' +
+            '<h2 class="text-base font-bold text-slate-900">5. Mã khóa bảo vệ Admin (Passcode 8 số)</h2>' +
+            '<span class="text-[11px] font-semibold ' + (config.adminPasscodeHash ? 'text-emerald-700' : 'text-amber-700') + '">' + (config.adminPasscodeHash ? 'Đang bật khóa 8 số' : 'Chưa đặt khóa') + '</span>' +
+            '</div>' +
+            '<p class="text-xs text-slate-500">Chặn khách hàng truy cập trực tiếp đường dẫn <span class="font-mono">admin.html</span>. Mã được băm SHA-256 trước khi lưu lên <span class="font-mono">config.json</span>.</p>' +
+            '<input id="new-passcode" type="text" inputmode="numeric" maxlength="8" placeholder="Nhập 8 chữ số mới..." class="w-full px-3.5 py-2.5 text-sm font-mono tracking-widest border border-slate-200 rounded-xl" />' +
+            '<button type="submit" class="w-full min-h-[44px] bg-slate-900 text-white text-xs font-bold rounded-xl">Cập nhật Passcode 8 số lên GitHub</button>' +
+            '<p id="pc-msg" class="text-xs font-medium text-[#0F766E]"></p></form>' +
 
             '</div>';
 
@@ -1875,7 +2068,7 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
               } catch (e) {}
             }
             msgEl.textContent = 'Đang kiểm tra kết nối...';
-            await pollGasOrders();
+            await pollGasOrders(true);
             msgEl.textContent = syncStatusText;
           };
 
@@ -1928,6 +2121,127 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
               msgEl.textContent = err.message;
             }
           };
+
+          var pcInp = document.getElementById('new-passcode');
+          if (pcInp) {
+            pcInp.oninput = function () { pcInp.value = pcInp.value.replace(/\\D/g, '').slice(0, 8); };
+          }
+          document.getElementById('passcode-cfg-form').onsubmit = async function (e) {
+            e.preventDefault();
+            var msgEl = document.getElementById('pc-msg');
+            var nextCode = document.getElementById('new-passcode').value.replace(/\\D/g, '');
+            if (nextCode.length !== 8) {
+              msgEl.textContent = 'Vui lòng nhập đúng 8 chữ số.';
+              return;
+            }
+            var salt = Math.random().toString(16).slice(2) + Date.now().toString(16);
+            var hash = sha256Hex('hkdvn:' + salt + ':' + nextCode);
+            config.adminPasscodeSalt = salt;
+            config.adminPasscodeHash = hash;
+            try {
+              await ghPut('config.json', toBase64Utf8(JSON.stringify(config, null, 2)), 'Cập nhật mã khóa Admin 8 số');
+              localStorage.setItem(unlockStorageKey, hash);
+              document.getElementById('new-passcode').value = '';
+              msgEl.textContent = 'Đã cập nhật Passcode 8 số mới lên GitHub thành công!';
+              updateHeaderVisibility();
+            } catch (err) {
+              msgEl.textContent = err.message;
+            }
+          };
+        }
+      }
+
+      function updateHeaderVisibility() {
+        var dn = document.getElementById('desktop-nav');
+        var ha = document.getElementById('admin-header-actions');
+        var mb = document.getElementById('mobile-bottom-nav');
+        var lb = document.getElementById('btn-lock-admin');
+        if (isUnlocked) {
+          if (dn) dn.classList.remove('hidden');
+          if (ha) ha.classList.remove('hidden');
+          if (mb) mb.classList.remove('hidden');
+          if (lb) {
+            if (config && config.adminPasscodeHash) lb.classList.remove('hidden');
+            else lb.classList.add('hidden');
+          }
+        } else {
+          if (dn) dn.classList.add('hidden');
+          if (ha) ha.classList.add('hidden');
+          if (mb) mb.classList.add('hidden');
+        }
+      }
+
+      function renderLockScreen() {
+        updateHeaderVisibility();
+        syncStatusText = 'Đã khóa bảo mật · Cần nhập Passcode 8 số';
+        syncHasError = false;
+        updateSyncStatusUI();
+        var root = document.getElementById('admin-app');
+        root.innerHTML = '<div class="min-h-[70vh] flex items-center justify-center">' +
+          '<form id="unlock-form" class="w-full max-w-sm bg-white border border-slate-200 rounded-3xl p-6 space-y-4 shadow-sm">' +
+          '<div class="w-12 h-12 rounded-2xl bg-teal-50 text-[#0F766E] flex items-center justify-center mx-auto">' +
+          '<svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' +
+          '</div>' +
+          '<div class="text-center space-y-1">' +
+          '<h2 class="text-lg font-bold text-slate-900">Trang Quản lý được bảo vệ</h2>' +
+          '<p class="text-xs text-slate-500">Vui lòng nhập mã khóa 8 chữ số của chủ cửa hàng để tiếp tục.</p>' +
+          '</div>' +
+          '<div class="flex items-center gap-2">' +
+          '<input id="unlock-input" type="' + (showLockPasscode ? 'text' : 'password') + '" inputmode="numeric" maxlength="8" autocomplete="one-time-code" required placeholder="••••••••" class="flex-1 min-w-0 px-4 py-3 text-center text-lg font-mono tracking-[0.25em] border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#0F766E]/25 focus:border-[#0F766E]" />' +
+          '<button id="toggle-lock-vis" type="button" class="min-h-[48px] px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700">' + (showLockPasscode ? 'Ẩn' : 'Hiện') + '</button>' +
+          '</div>' +
+          (lockError ? '<p class="text-xs font-semibold text-red-700 text-center">' + esc(lockError) + '</p>' : '') +
+          '<button type="submit" class="w-full min-h-[46px] bg-[#0F766E] hover:bg-[#0D655E] text-white text-sm font-bold rounded-xl">Mở khóa Trang Quản lý</button>' +
+          '<div class="pt-2 border-t border-slate-100 text-center">' +
+          '<a href="./" class="text-xs font-semibold text-[#0F766E] hover:underline">Bạn là khách hàng? Quay lại Thực đơn</a>' +
+          '</div></form></div>';
+
+        var inp = document.getElementById('unlock-input');
+        if (inp) {
+          inp.focus();
+          inp.oninput = function () { inp.value = inp.value.replace(/\\D/g, '').slice(0, 8); };
+        }
+        document.getElementById('toggle-lock-vis').onclick = function () {
+          var val = inp ? inp.value : '';
+          showLockPasscode = !showLockPasscode;
+          renderLockScreen();
+          var nextInp = document.getElementById('unlock-input');
+          if (nextInp) { nextInp.value = val; nextInp.focus(); }
+        };
+        document.getElementById('unlock-form').onsubmit = function (e) {
+          e.preventDefault();
+          var entered = (document.getElementById('unlock-input').value || '').replace(/\\D/g, '');
+          if (entered.length !== 8) {
+            lockError = 'Vui lòng nhập đủ 8 chữ số.';
+            renderLockScreen();
+            return;
+          }
+          var computed = sha256Hex('hkdvn:' + (config.adminPasscodeSalt || '') + ':' + entered);
+          if (computed === config.adminPasscodeHash) {
+            lockError = '';
+            isUnlocked = true;
+            try { localStorage.setItem(unlockStorageKey, config.adminPasscodeHash); } catch (err) {}
+            updateHeaderVisibility();
+            render();
+            startAdminPolling();
+          } else {
+            lockError = 'Mã khóa chưa đúng. Vui lòng kiểm tra lại 8 chữ số.';
+            renderLockScreen();
+          }
+        };
+      }
+
+      function startAdminPolling() {
+        if (!isUnlocked || !config) return;
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        if (config.model === 'fnb') {
+          pollGasOrders(true);
+          pollTimer = setInterval(function () {
+            if (!document.hidden && isUnlocked) pollGasOrders(false);
+          }, 5000);
+        } else {
+          syncStatusText = 'Chế độ Bán lẻ / POS sẵn sàng';
+          updateSyncStatusUI();
         }
       }
 
@@ -1940,8 +2254,17 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
       }
 
       document.querySelectorAll('[data-tab]').forEach(function (b) {
-        b.onclick = function () { stopSkuScanner(); activeTab = b.getAttribute('data-tab'); render(); };
+        b.onclick = function () { if (!isUnlocked) return; stopSkuScanner(); activeTab = b.getAttribute('data-tab'); render(); };
       });
+      document.getElementById('btn-lock-admin').onclick = function () {
+        if (!config || !config.adminPasscodeHash) return;
+        try { localStorage.removeItem(unlockStorageKey); } catch (e) {}
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        isUnlocked = false;
+        lockError = '';
+        stopSkuScanner();
+        renderLockScreen();
+      };
       document.getElementById('btn-sound').onclick = function () {
         soundEnabled = !soundEnabled;
         updateSoundButton();
@@ -1950,14 +2273,14 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
       document.getElementById('btn-bell').onclick = openNotificationsModal;
 
       window.addEventListener('storage', function (e) {
-        if (e.key === storageBridgeKey) {
+        if (e.key === storageBridgeKey && isUnlocked) {
           var localOrders = readLiveBridgeOrders();
           if (localOrders.length) applyIncomingOrders(localOrders);
         }
       });
 
       document.addEventListener('visibilitychange', function () {
-        if (!document.hidden && config && config.model === 'fnb') {
+        if (!document.hidden && isUnlocked && config && config.model === 'fnb') {
           pollGasOrders(false);
         }
       });
@@ -1972,15 +2295,23 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
         config.infra = getEffectiveInfra();
         products = Array.isArray(res[1]) ? res[1] : [];
         document.getElementById('admin-shop-title').textContent = config.shopName;
-        render();
-        if (config.model === 'fnb') {
-          pollGasOrders(true);
-          pollTimer = setInterval(function () {
-            if (!document.hidden) pollGasOrders(false);
-          }, 5000);
+
+        if (!config.adminPasscodeHash) {
+          isUnlocked = true;
         } else {
-          syncStatusText = 'Chế độ Bán lẻ / POS sẵn sàng';
-          updateSyncStatusUI();
+          try {
+            isUnlocked = localStorage.getItem(unlockStorageKey) === config.adminPasscodeHash;
+          } catch (e) {
+            isUnlocked = false;
+          }
+        }
+
+        if (isUnlocked) {
+          updateHeaderVisibility();
+          render();
+          startAdminPolling();
+        } else {
+          renderLockScreen();
         }
       }).catch(function () {
         document.getElementById('admin-app').innerHTML = '<div class="p-8 text-center text-sm text-red-700 bg-white rounded-2xl border border-slate-200">Không tải được dữ liệu cửa hàng.</div>';

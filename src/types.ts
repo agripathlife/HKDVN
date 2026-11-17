@@ -111,6 +111,8 @@ export interface ShopConfig {
   tableCount: number;
   bank: BankInfo;
   infra: ProvisionedInfra;
+  adminPasscodeSalt?: string;
+  adminPasscodeHash?: string;
 }
 
 export interface ProcessedImageResult {

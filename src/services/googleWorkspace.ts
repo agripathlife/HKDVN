@@ -275,6 +275,7 @@ function syncLiveCache(ss) {
 
 function doGet(e) {
   const since = (e && e.parameter && e.parameter.since) || '';
+  const cb = (e && e.parameter && e.parameter.callback) || '';
   const cache = CacheService.getScriptCache();
   let payload = null;
   try {
@@ -290,12 +291,12 @@ function doGet(e) {
   }
 
   if (since && payload.updatedAt && since === payload.updatedAt) {
-    return jsonOut({ unchanged: true, updatedAt: payload.updatedAt });
+    return jsonOut({ unchanged: true, updatedAt: payload.updatedAt }, cb);
   }
   if (since && !payload.updatedAt && since === '__EMPTY__') {
-    return jsonOut({ unchanged: true, updatedAt: '' });
+    return jsonOut({ unchanged: true, updatedAt: '' }, cb);
   }
-  return jsonOut({ unchanged: false, updatedAt: payload.updatedAt || '', orders: payload.orders || [] });
+  return jsonOut({ unchanged: false, updatedAt: payload.updatedAt || '', orders: payload.orders || [] }, cb);
 }
 
 function doPost(e) {
@@ -397,9 +398,15 @@ function doPost(e) {
   }
 }
 
-function jsonOut(obj) {
+function jsonOut(obj, callbackName) {
+  const text = JSON.stringify(obj);
+  if (callbackName && /^[a-zA-Z0-9_$.]+$/.test(callbackName)) {
+    return ContentService
+      .createTextOutput(callbackName + '(' + text + ');')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
   return ContentService
-    .createTextOutput(JSON.stringify(obj))
+    .createTextOutput(text)
     .setMimeType(ContentService.MimeType.JSON);
 }
 `;

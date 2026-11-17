@@ -83,6 +83,7 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [orderFeedback, setOrderFeedback] = useState<string | null>(null);
   const [billModalOpen, setBillModalOpen] = useState(false);
+  const [selectedFnbDish, setSelectedFnbDish] = useState<ProductItem | null>(null);
 
   useEffect(() => {
     if (initialTableNumber && initialTableNumber >= 1) {
@@ -425,10 +426,15 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                       <button
                         type="button"
                         onClick={() => setSelectedProduct(product)}
-                        className="mt-1.5 text-left text-base font-semibold text-slate-900 hover:text-[#0F766E] line-clamp-2 cursor-pointer"
+                        className="mt-1.5 text-left text-base font-semibold text-slate-900 hover:text-[#0F766E] cursor-pointer"
                       >
                         {product.name}
                       </button>
+                      {product.description && (
+                        <p className="mt-1.5 text-xs text-slate-600 whitespace-pre-line leading-relaxed">
+                          {product.description}
+                        </p>
+                      )}
                     </div>
 
                     <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
@@ -787,7 +793,18 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
               </div>
 
               <div className="p-5 sm:p-6 space-y-4">
-                <p className="text-sm text-slate-600">{activeCardProduct.description}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-sm text-slate-600 whitespace-pre-line leading-relaxed flex-1">
+                    {activeCardProduct.description || 'Món ngon đặc biệt phục vụ tại quán.'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFnbDish(activeCardProduct)}
+                    className="text-xs font-semibold text-[#0F766E] hover:underline shrink-0 cursor-pointer"
+                  >
+                    Xem chi tiết
+                  </button>
+                </div>
 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
@@ -849,23 +866,39 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
                     key={dish.id}
                     className="bg-white border border-slate-200 rounded-2xl overflow-hidden flex flex-col"
                   >
-                    <div className="aspect-4/3 bg-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedFnbDish(dish)}
+                      className="aspect-4/3 w-full bg-slate-100 text-left overflow-hidden cursor-pointer"
+                    >
                       <ProductImage
                         src={dish.imageUrl}
                         alt={dish.name}
                         className="w-full h-full object-cover"
                       />
-                    </div>
+                    </button>
                     <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                      <div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFnbDish(dish)}
+                        className="text-left w-full cursor-pointer"
+                      >
                         <p className="text-xs text-slate-500">{dish.category}</p>
-                        <h3 className="text-base font-semibold text-slate-900 mt-0.5">
+                        <h3 className="text-base font-semibold text-slate-900 hover:text-[#0F766E] mt-0.5">
                           {dish.name}
                         </h3>
-                        <p className="text-base font-bold font-mono tabular-nums text-[#0F766E] mt-1">
+                        {dish.description && (
+                          <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed mt-1">
+                            {dish.description}
+                          </p>
+                        )}
+                        <p className="text-base font-bold font-mono tabular-nums text-[#0F766E] mt-1.5">
                           {formatVND(dish.price)}
+                          <span className="text-xs font-sans font-normal text-slate-500">
+                            {' '}/ {dish.unit}
+                          </span>
                         </p>
-                      </div>
+                      </button>
 
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2">
@@ -1012,6 +1045,105 @@ export const StorefrontView: React.FC<StorefrontViewProps> = ({
           >
             Xác nhận đặt món
           </button>
+        </div>
+      )}
+
+      {/* F&B Dish Detail Modal */}
+      {selectedFnbDish && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/60 backdrop-blur-xs p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedFnbDish(null);
+          }}
+        >
+          <div className="w-full max-w-lg bg-white rounded-t-3xl sm:rounded-2xl overflow-hidden shadow-xl max-h-[90vh] flex flex-col">
+            <div className="relative aspect-4/3 bg-slate-100 shrink-0">
+              <ProductImage
+                src={selectedFnbDish.imageUrl}
+                alt={selectedFnbDish.name}
+                className="w-full h-full object-cover"
+              />
+              <button
+                type="button"
+                onClick={() => setSelectedFnbDish(null)}
+                aria-label="Đóng chi tiết món"
+                className="absolute top-3 right-3 min-h-[36px] min-w-[36px] rounded-full bg-white/90 text-slate-700 flex items-center justify-center shadow-sm hover:bg-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4">
+              <div>
+                <p className="text-xs text-slate-500">
+                  {selectedFnbDish.category} · SKU {selectedFnbDish.sku}
+                </p>
+                <h2 className="text-xl font-bold text-slate-900 mt-1">
+                  {selectedFnbDish.name}
+                </h2>
+                <p className="text-xl font-mono tabular-nums font-bold text-[#0F766E] mt-1">
+                  {formatVND(selectedFnbDish.price)}
+                  <span className="text-xs font-sans font-normal text-slate-500">
+                    {' '}/ {selectedFnbDish.unit}
+                  </span>
+                </p>
+              </div>
+
+              <p className="text-sm text-slate-600 whitespace-pre-line leading-relaxed">
+                {selectedFnbDish.description || 'Món ăn được chế biến tươi mới mỗi ngày tại cửa hàng.'}
+              </p>
+
+              <div className="pt-3 border-t border-slate-100 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold text-slate-700">Số lượng chọn</span>
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setDishQty(selectedFnbDish.id, -1)}
+                      className="min-h-[42px] min-w-[42px] rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 cursor-pointer"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <span className="w-8 text-center font-mono tabular-nums font-bold text-base">
+                      {pendingCart[selectedFnbDish.id]?.qty || 0}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setDishQty(selectedFnbDish.id, 1)}
+                      className="min-h-[42px] min-w-[42px] rounded-xl bg-[#0F766E] text-white flex items-center justify-center hover:bg-[#0D655E] cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <input
+                  type="text"
+                  value={pendingCart[selectedFnbDish.id]?.note || ''}
+                  onChange={(e) => setDishNote(selectedFnbDish.id, e.target.value)}
+                  placeholder="Ghi chú riêng cho món này (ít đá, không hành)..."
+                  className="w-full px-3.5 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#0F766E]/25 focus:border-[#0F766E]"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if ((pendingCart[selectedFnbDish.id]?.qty || 0) === 0) {
+                      setDishQty(selectedFnbDish.id, 1);
+                    }
+                    setSelectedFnbDish(null);
+                  }}
+                  className="w-full py-3 min-h-[44px] bg-[#0F766E] hover:bg-[#0D655E] text-white text-sm font-semibold rounded-xl cursor-pointer"
+                >
+                  {(pendingCart[selectedFnbDish.id]?.qty || 0) > 0
+                    ? 'Xong · Quay lại thực đơn'
+                    : 'Chọn 1 món & Quay lại'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
