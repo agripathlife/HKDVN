@@ -75,6 +75,30 @@ export const googleLogout = async (): Promise<void> => {
   cachedAccessToken = null;
 };
 
+export function translateGoogleError(rawMsg: string, status?: number): string {
+  const lower = rawMsg.toLowerCase();
+  if (lower.includes('user has not enabled the apps script api')) {
+    return 'Tài khoản Google này chưa bật Google Apps Script API (hoặc vừa mới bật nên Google cần 2–3 phút để đồng bộ). Hãy kiểm tra đúng Gmail tại trang Cài đặt Apps Script, đợi 2 phút rồi bấm "Thử lại Bước 03", hoặc dùng Cách 2 (dán mã Code.gs thủ công) bên dưới.';
+  }
+  if (
+    lower.includes('apps script api has not been used in project') ||
+    lower.includes('has not been used in project') ||
+    lower.includes('accessnotconfigured')
+  ) {
+    return 'Dự án Google Cloud chưa bật dịch vụ Google Apps Script API (script.googleapis.com). Bạn có thể bật API này trên Google Cloud Console hoặc dùng Cách 2 (dán mã Code.gs trực tiếp trong Google Sheet) ở bên dưới.';
+  }
+  if (lower.includes('insufficient authentication scopes') || lower.includes('insufficient')) {
+    return 'Tài khoản chưa được cấp đủ quyền Google Drive, Sheets hoặc Apps Script. Vui lòng Đăng xuất rồi Đăng nhập lại và tích chọn đầy đủ tất cả các quyền.';
+  }
+  if (lower.includes('invalid credentials') || status === 401) {
+    return 'Phiên đăng nhập Google đã hết hạn. Vui lòng Đăng xuất và Đăng nhập lại để lấy mã truy cập mới.';
+  }
+  if (lower.includes('permission') || status === 403) {
+    return `Tài khoản chưa có quyền thực hiện thao tác này (${rawMsg}).`;
+  }
+  return rawMsg || `Lỗi kết nối Google API (mã ${status || 'không xác định'}).`;
+}
+
 async function googleFetch<T>(url: string, token: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -87,8 +111,8 @@ async function googleFetch<T>(url: string, token: string, init?: RequestInit): P
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
   if (!res.ok) {
-    const msg = data?.error?.message || `Google API lỗi (${res.status})`;
-    throw new Error(msg);
+    const raw = data?.error?.message || '';
+    throw new Error(translateGoogleError(raw, res.status));
   }
   return data as T;
 }
@@ -376,9 +400,11 @@ export async function deployAppsScriptBackend(
 
     return { scriptId: project.scriptId, webAppUrl };
   } catch (err) {
+    const raw = err instanceof Error ? err.message : '';
     return {
       manualRequired: true,
-      errorMessage: err instanceof Error ? err.message : 'Apps Script API chưa được bật trên tài khoản Google.',
+      errorMessage:
+        raw || 'Chưa thể triển khai tự động Google Apps Script. Vui lòng xem hướng dẫn chi tiết bên dưới.',
     };
   }
 }

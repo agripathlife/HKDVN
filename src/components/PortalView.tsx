@@ -2,13 +2,17 @@ import React, { useState } from 'react';
 import { User } from 'firebase/auth';
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Cloud,
   Copy,
   Database,
   ExternalLink,
   FolderGit2,
+  HelpCircle,
   Loader2,
   LogOut,
+  RefreshCw,
   ShoppingBag,
   Store,
   UtensilsCrossed,
@@ -75,11 +79,13 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
   const [confirmProvisionOpen, setConfirmProvisionOpen] = useState(false);
   const [isProvisioning, setIsProvisioning] = useState(false);
+  const [retryingGasOnly, setRetryingGasOnly] = useState(false);
+  const [showGasGuide, setShowGasGuide] = useState(false);
   const [steps, setSteps] = useState<ProvisionStepState[]>([
     { id: 'drive', label: '01. Tạo thư mục QuanLyCuaHang_Data trên Google Drive', status: 'idle' },
     { id: 'sheets', label: '02. Khởi tạo Google Sheet 5 bảng dữ liệu kinh doanh', status: 'idle' },
     { id: 'gas', label: '03. Triển khai Google Apps Script Web App API (/exec)', status: 'idle' },
-    { id: 'github', label: '04. Khởi tạo Repo & kích hoạt GitHub Pages cửa hàng', status: 'idle' },
+    { id: 'github', label: '04. Khởi tạo kho lưu trữ & kích hoạt GitHub Pages cửa hàng', status: 'idle' },
   ]);
   const [manualGasInput, setManualGasInput] = useState(config.infra.gasEndpointUrl || '');
   const [copiedCode, setCopiedCode] = useState(false);
@@ -111,7 +117,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
       setAuthError(
         err instanceof Error
           ? err.message
-          : 'Không thể đăng nhập Google. Vui lòng cho phép cửa sổ bật lên.'
+          : 'Không thể đăng nhập Google. Vui lòng cho phép cửa sổ bật lên trên trình duyệt.'
       );
     }
   };
@@ -123,7 +129,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
   const handleVerifyGitHub = async () => {
     if (!patInput.trim()) {
-      setGhError('Vui lòng nhập GitHub Personal Access Token.');
+      setGhError('Vui lòng nhập mã Token GitHub (Personal Access Token).');
       return;
     }
     setGhError(null);
@@ -132,7 +138,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
       const user = await verifyGitHubToken(patInput.trim());
       onGitHubAuthChange(patInput.trim(), user);
     } catch (err) {
-      setGhError(err instanceof Error ? err.message : 'Token GitHub không hợp lệ.');
+      setGhError(err instanceof Error ? err.message : 'Mã Token GitHub không hợp lệ.');
       onGitHubAuthChange('', null);
     } finally {
       setVerifyingGh(false);
@@ -151,7 +157,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
     const googleToken = getGoogleAccessToken();
 
     try {
-      // Step 1: Drive Folder
+      // Bước 1: Thư mục Google Drive
       if (googleToken) {
         updateStep('drive', { status: 'running', detail: 'Đang tạo thư mục trên Google Drive...' });
         const folder = await createDriveFolder(googleToken, 'QuanLyCuaHang_Data');
@@ -162,18 +168,18 @@ export const PortalView: React.FC<PortalViewProps> = ({
           detail: `Đã tạo thư mục "${folder.name}" (${folder.id})`,
         });
 
-        // Step 2: Google Sheets
-        updateStep('sheets', { status: 'running', detail: 'Đang tạo 5 tab Sheet chuẩn...' });
+        // Bước 2: Google Sheets
+        updateStep('sheets', { status: 'running', detail: 'Đang tạo 5 trang tính chuẩn...' });
         const sheet = await createShopSpreadsheet(googleToken, folder.id, draft);
         nextInfra.spreadsheetId = sheet.spreadsheetId;
         nextInfra.spreadsheetUrl = sheet.spreadsheetUrl;
         updateStep('sheets', {
           status: 'done',
-          detail: `Đã tạo bảng tính với 5 sheet: DoanhThu, ChiTietDonHang, DanhMucHangHoa, CauHinh, DonHienTai.`,
+          detail: `Đã tạo bảng tính với 5 trang: DoanhThu, ChiTietDonHang, DanhMucHangHoa, CauHinh, DonHienTai.`,
         });
 
-        // Step 3: Apps Script
-        updateStep('gas', { status: 'running', detail: 'Đang tạo và xuất bản Web App API...' });
+        // Bước 3: Apps Script
+        updateStep('gas', { status: 'running', detail: 'Đang tạo và xuất bản dịch vụ Web App API...' });
         const gasRes = await deployAppsScriptBackend(
           googleToken,
           sheet.spreadsheetId,
@@ -186,15 +192,16 @@ export const PortalView: React.FC<PortalViewProps> = ({
           setManualGasInput(gasRes.webAppUrl);
           updateStep('gas', {
             status: 'done',
-            detail: `Đã triển khai Web App Endpoint: ${gasRes.webAppUrl}`,
+            detail: `Đã triển khai thành công đường dẫn API: ${gasRes.webAppUrl}`,
           });
         } else {
           nextInfra.gasManualRequired = true;
+          setShowGasGuide(true);
           updateStep('gas', {
             status: 'warning',
             detail:
               gasRes.errorMessage ||
-              'Tài khoản Google chưa bật Apps Script API. Bạn có thể dán mã Code.gs vào script.google.com và nhập link /exec bên dưới.',
+              'Chưa thể tự động triển khai Apps Script. Vui lòng xem hướng dẫn chi tiết ngay bên dưới.',
           });
         }
       } else {
@@ -203,7 +210,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
         updateStep('gas', { status: 'warning', detail: 'Chưa đăng nhập Google — bỏ qua bước Apps Script.' });
       }
 
-      // Step 4: GitHub Repo & Pages
+      // Bước 4: GitHub Repo & Pages
       if (githubToken && githubUser) {
         updateStep('github', { status: 'running', detail: 'Đang đẩy mã nguồn lên GitHub Pages...' });
         const modelProducts = products.filter((p) => p.model === draft.model);
@@ -223,7 +230,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
       } else {
         updateStep('github', {
           status: 'warning',
-          detail: 'Chưa kết nối GitHub Token — cửa hàng vẫn chạy trực tiếp tại cổng HKDVN.',
+          detail: 'Chưa kết nối Token GitHub — cửa hàng vẫn hoạt động đầy đủ ngay trên cổng HKDVN.',
         });
       }
 
@@ -232,7 +239,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
       setDraft(updatedConfig);
       await onUpdateConfig(updatedConfig);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Lỗi khởi tạo hạ tầng.';
+      const message = err instanceof Error ? err.message : 'Lỗi trong quá trình khởi tạo hạ tầng.';
       setSteps((prev) =>
         prev.map((s) => (s.status === 'running' ? { ...s, status: 'error', detail: message } : s))
       );
@@ -241,16 +248,79 @@ export const PortalView: React.FC<PortalViewProps> = ({
     }
   };
 
+  const handleRetryStep3GasOnly = async () => {
+    const googleToken = getGoogleAccessToken();
+    if (!googleToken) {
+      updateStep('gas', {
+        status: 'warning',
+        detail: 'Phiên đăng nhập Google đã hết hạn hoặc chưa đăng nhập. Vui lòng bấm Đăng xuất rồi Đăng nhập lại bằng Google ở Bước 02.',
+      });
+      setShowGasGuide(true);
+      return;
+    }
+    if (!draft.infra.spreadsheetId) {
+      updateStep('gas', {
+        status: 'warning',
+        detail: 'Chưa có bảng tính Google Sheet từ Bước 02. Vui lòng chạy "Khởi tạo hạ tầng tự động" trước.',
+      });
+      return;
+    }
+
+    setRetryingGasOnly(true);
+    updateStep('gas', { status: 'running', detail: 'Đang thử triển khai lại Google Apps Script Web App...' });
+    try {
+      const gasRes = await deployAppsScriptBackend(
+        googleToken,
+        draft.infra.spreadsheetId,
+        draft.shopName
+      );
+      if (gasRes.webAppUrl) {
+        const nextInfra = {
+          ...draft.infra,
+          scriptId: gasRes.scriptId,
+          gasEndpointUrl: gasRes.webAppUrl,
+          gasManualRequired: false,
+        };
+        const updatedConfig = { ...draft, infra: nextInfra };
+        setDraft(updatedConfig);
+        setManualGasInput(gasRes.webAppUrl);
+        await onUpdateConfig(updatedConfig);
+        updateStep('gas', {
+          status: 'done',
+          detail: `Đã triển khai thành công đường dẫn API: ${gasRes.webAppUrl}`,
+        });
+      } else {
+        setShowGasGuide(true);
+        updateStep('gas', {
+          status: 'warning',
+          detail:
+            gasRes.errorMessage ||
+            'Chưa thể tự động triển khai Apps Script. Vui lòng xem hướng dẫn chi tiết bên dưới.',
+        });
+      }
+    } finally {
+      setRetryingGasOnly(false);
+    }
+  };
+
   const handleSaveManualGasUrl = async () => {
+    const cleanUrl = manualGasInput.trim();
     const updated = {
       ...draft,
       infra: {
         ...draft.infra,
-        gasEndpointUrl: manualGasInput.trim(),
+        gasEndpointUrl: cleanUrl,
+        gasManualRequired: false,
       },
     };
     setDraft(updated);
     await onUpdateConfig(updated);
+    if (cleanUrl) {
+      updateStep('gas', {
+        status: 'done',
+        detail: `Đã lưu đường dẫn API thủ công: ${cleanUrl}`,
+      });
+    }
     setSavedNotice(true);
     setTimeout(() => setSavedNotice(false), 2000);
   };
@@ -265,12 +335,12 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const affectedSummary: string[] = [];
   if (googleUser && getGoogleAccessToken()) {
     affectedSummary.push('Tạo thư mục "QuanLyCuaHang_Data" trên Google Drive của bạn');
-    affectedSummary.push('Tạo Google Sheet gồm 5 tab dữ liệu doanh thu và đơn hàng');
+    affectedSummary.push('Tạo Google Sheet gồm 5 bảng dữ liệu doanh thu và đơn hàng');
     affectedSummary.push('Triển khai Google Apps Script Web App gắn với bảng tính vừa tạo');
   }
   if (githubUser && githubToken) {
     affectedSummary.push(
-      `Tạo hoặc cập nhật GitHub Repo "${githubUser.login}/${repoName}" với config.json, products.json, index.html và bật GitHub Pages`
+      `Tạo hoặc cập nhật kho lưu trữ GitHub "${githubUser.login}/${repoName}" với config.json, products.json, index.html và bật GitHub Pages`
     );
   }
 
@@ -281,7 +351,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
         <div className="lg:col-span-7 flex flex-col justify-between bg-white border border-slate-200 rounded-2xl p-6 sm:p-10">
           <div>
             <p className="text-xs font-medium text-[#0F766E] tracking-wide">
-              Client-Side First · Bring-Your-Own-Backend
+              Vận hành trực tiếp trên trình duyệt · Hạ tầng dữ liệu riêng của chủ quán
             </p>
             <h1 className="mt-3 text-3xl sm:text-4xl lg:text-[42px] font-display font-bold tracking-tight text-slate-900 leading-[1.15] text-balance">
               Khởi tạo cửa hàng bán lẻ &amp; F&amp;B trên hạ tầng riêng của bạn
@@ -321,7 +391,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
         </div>
       </section>
 
-      {/* Data Governance 4-column Strip */}
+      {/* Ma trận lưu trữ dữ liệu 4 cột */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -329,7 +399,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
             <span>Mã nguồn giao diện</span>
           </div>
           <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
-            GitHub Repository của chủ quán · CDN toàn cầu miễn phí trên GitHub Pages.
+            Kho lưu trữ GitHub của chủ quán · Tải trang tốc độ cao miễn phí qua GitHub Pages.
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
@@ -338,7 +408,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
             <span>Danh mục &amp; Ảnh WebP</span>
           </div>
           <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
-            Tệp products.json &amp; /assets/img/*.webp (~30–50KB/ảnh) tải siêu tốc.
+            Tệp products.json &amp; /assets/img/*.webp (~30–50KB/ảnh) tải siêu nhanh.
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-xl p-4">
@@ -356,12 +426,12 @@ export const PortalView: React.FC<PortalViewProps> = ({
             <span>Hóa đơn &amp; Doanh thu</span>
           </div>
           <p className="mt-1.5 text-xs text-slate-600 leading-relaxed">
-            IndexedDB ngoại tuyến + đồng bộ lên Google Sheets (DoanhThu) riêng tư.
+            Lưu ngoại tuyến trên trình duyệt + đồng bộ lên Google Sheets (DoanhThu) riêng tư.
           </p>
         </div>
       </section>
 
-      {/* Step 1: Choose Model */}
+      {/* Bước 1: Chọn mô hình */}
       <section className="space-y-4">
         <div>
           <h2 className="text-xl font-display font-bold text-slate-900">
@@ -416,7 +486,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
               </span>
             </div>
             <h3 className="mt-4 text-lg font-bold text-slate-900">
-              Mô hình 2: Dịch vụ Ăn uống / Tại chỗ (F&amp;B &amp; On-site)
+              Mô hình 2: Dịch vụ Ăn uống / Tại chỗ (F&amp;B)
             </h3>
             <p className="mt-2 text-sm text-slate-600 leading-relaxed">
               Sinh mã QR cho từng bàn (?ban=X), khách gọi món toàn màn hình kèm ghi chú, báo đơn âm thanh tức thời cho Bếp &amp; Thu ngân, yêu cầu thanh toán VietQR.
@@ -425,20 +495,20 @@ export const PortalView: React.FC<PortalViewProps> = ({
         </div>
       </section>
 
-      {/* Step 2: OAuth & Shop Configuration */}
+      {/* Bước 2: Xác thực & Thông tin quán */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left: Accounts Auth */}
+        {/* Cột trái: Kết nối tài khoản */}
         <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-6 space-y-6">
           <div>
             <h2 className="text-xl font-display font-bold text-slate-900">
-              02. Kết nối tài khoản BYOB
+              02. Kết nối tài khoản sở hữu dữ liệu
             </h2>
             <p className="text-sm text-slate-600 mt-1">
-              Dữ liệu nằm hoàn toàn trên Google Drive và GitHub của chủ quán.
+              Dữ liệu nằm hoàn toàn trên Google Drive và GitHub cá nhân của chủ quán.
             </p>
           </div>
 
-          {/* Google Workspace Sign-In */}
+          {/* Đăng nhập Google Workspace */}
           <div className="pt-4 border-t border-slate-100 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-slate-900">Tài khoản Google Workspace</span>
@@ -456,7 +526,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 <button
                   type="button"
                   onClick={handleGoogleSignOut}
-                  className="px-3 py-2 min-h-[40px] text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 inline-flex items-center gap-1.5 shrink-0"
+                  className="px-3 py-2 min-h-[40px] text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   <span>Đăng xuất</span>
@@ -496,7 +566,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                         />
                       </svg>
                     </div>
-                    <span className="gsi-material-button-contents">Sign in with Google</span>
+                    <span className="gsi-material-button-contents">Đăng nhập bằng Google</span>
                   </div>
                 </button>
                 {authError && <p className="mt-2 text-xs text-red-700">{authError}</p>}
@@ -514,7 +584,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 rel="noreferrer"
                 className="text-xs font-medium text-[#0F766E] hover:underline inline-flex items-center gap-1"
               >
-                <span>Tạo Token (quyền repo)</span>
+                <span>Tạo mã Token (quyền repo)</span>
                 <ExternalLink className="w-3 h-3" />
               </a>
             </div>
@@ -531,7 +601,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 type="button"
                 onClick={handleVerifyGitHub}
                 disabled={verifyingGh}
-                className="px-4 py-2 min-h-[40px] bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0"
+                className="px-4 py-2 min-h-[40px] bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 {verifyingGh ? 'Đang kiểm tra...' : 'Kết nối'}
               </button>
@@ -557,7 +627,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                   type="text"
                   value={repoName}
                   onChange={(e) => setRepoName(e.target.value)}
-                  aria-label="Tên repository GitHub"
+                  aria-label="Tên kho lưu trữ GitHub"
                   className="w-32 px-2.5 py-1 text-xs font-mono border border-slate-200 rounded-md bg-white"
                 />
               </div>
@@ -566,7 +636,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
           </div>
         </div>
 
-        {/* Right: Shop Identity & VietQR */}
+        {/* Cột phải: Thông tin quán & VietQR */}
         <form
           onSubmit={handleSaveShopInfo}
           className="lg:col-span-7 bg-white border border-slate-200 rounded-2xl p-6 space-y-5"
@@ -577,7 +647,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                 Thông tin cửa hàng &amp; VietQR
               </h2>
               <p className="text-sm text-slate-600 mt-0.5">
-                Tự động ghi vào config.json và bảng tính CauHinh.
+                Tự động ghi vào tệp config.json và bảng tính CauHinh.
               </p>
             </div>
             {savedNotice && (
@@ -716,7 +786,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
             <button
               type="submit"
               disabled={savingConfig}
-              className="px-4 py-2.5 min-h-[42px] bg-white border border-slate-200 hover:bg-slate-50 text-slate-900 text-sm font-semibold rounded-lg transition-colors whitespace-nowrap"
+              className="px-4 py-2.5 min-h-[42px] bg-white border border-slate-200 hover:bg-slate-50 text-slate-900 text-sm font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
             >
               {savingConfig ? 'Đang lưu...' : 'Lưu thông tin quán'}
             </button>
@@ -725,28 +795,28 @@ export const PortalView: React.FC<PortalViewProps> = ({
               type="button"
               disabled={isProvisioning || (!googleUser && !githubUser)}
               onClick={() => setConfirmProvisionOpen(true)}
-              className="px-5 py-2.5 min-h-[42px] bg-[#0F766E] hover:bg-[#0D655E] disabled:bg-slate-300 text-white text-sm font-semibold rounded-lg transition-colors whitespace-nowrap"
+              className="px-5 py-2.5 min-h-[42px] bg-[#0F766E] hover:bg-[#0D655E] disabled:bg-slate-300 text-white text-sm font-semibold rounded-lg transition-colors whitespace-nowrap cursor-pointer"
             >
               {isProvisioning ? 'Đang khởi tạo hạ tầng...' : 'Khởi tạo hạ tầng tự động'}
             </button>
           </div>
           {!googleUser && !githubUser && (
             <p className="text-xs text-slate-500">
-              Đăng nhập Google hoặc kết nối GitHub Token ở cột bên trái để chạy quy trình tự động hóa hạ tầng (hoặc dùng ngay chế độ Ngoại tuyến / Demo ở các tab trên).
+              Đăng nhập Google hoặc kết nối mã Token GitHub ở cột bên trái để chạy quy trình tự động hóa hạ tầng (hoặc trải nghiệm ngay chế độ Ngoại tuyến ở các mục trên).
             </p>
           )}
         </form>
       </section>
 
-      {/* Step 3: Auto-Provisioning Pipeline Status */}
+      {/* Bước 3: Tiến trình tự động hóa hạ tầng */}
       <section className="bg-white border border-slate-200 rounded-2xl p-6 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <h2 className="text-xl font-display font-bold text-slate-900">
-              03. Tiến trình Tự động hóa Hạ tầng (Auto-Provisioning)
+              03. Tiến trình Tự động hóa Hạ tầng
             </h2>
             <p className="text-sm text-slate-600 mt-0.5">
-              Theo dõi trạng thái khởi tạo Google Drive, Google Sheets, Google Apps Script và GitHub Pages.
+              Theo dõi quá trình tạo thư mục Google Drive, bảng tính Google Sheets, Google Apps Script và xuất bản GitHub Pages.
             </p>
           </div>
           {draft.infra.provisionedAt && (
@@ -759,13 +829,26 @@ export const PortalView: React.FC<PortalViewProps> = ({
         <div className="divide-y divide-slate-100 border-t border-b border-slate-100">
           {steps.map((step) => (
             <div key={step.id} className="py-3.5 flex items-start justify-between gap-4">
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-slate-900">{step.label}</p>
                 {step.detail && (
-                  <p className="text-xs text-slate-600 mt-1 break-all">{step.detail}</p>
+                  <p className="text-xs text-slate-600 mt-1 break-words leading-relaxed">
+                    {step.detail}
+                  </p>
                 )}
               </div>
-              <div className="shrink-0 flex items-center gap-1.5 text-xs font-medium">
+              <div className="shrink-0 flex items-center gap-2 text-xs font-medium">
+                {step.id === 'gas' && draft.infra.spreadsheetId && (
+                  <button
+                    type="button"
+                    disabled={retryingGasOnly || isProvisioning}
+                    onClick={handleRetryStep3GasOnly}
+                    className="px-2.5 py-1.5 min-h-[32px] bg-white border border-slate-200 hover:bg-slate-50 text-slate-800 rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${retryingGasOnly ? 'animate-spin' : ''}`} />
+                    <span>Thử lại Bước 03</span>
+                  </button>
+                )}
                 {step.status === 'idle' && <span className="text-slate-400">Chờ chạy</span>}
                 {step.status === 'running' && (
                   <span className="text-[#0F766E] inline-flex items-center gap-1">
@@ -780,7 +863,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                   </span>
                 )}
                 {step.status === 'warning' && (
-                  <span className="text-amber-700">Cần bổ sung</span>
+                  <span className="text-amber-700">Cần thao tác</span>
                 )}
                 {step.status === 'error' && <span className="text-red-700">Thất bại</span>}
               </div>
@@ -788,7 +871,93 @@ export const PortalView: React.FC<PortalViewProps> = ({
           ))}
         </div>
 
-        {/* Provisioned Links + Manual GAS fallback */}
+        {/* Hướng dẫn chi tiết Bước 03: Google Apps Script Web App (/exec) */}
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <HelpCircle className="w-4 h-4 text-[#0F766E] shrink-0" />
+              <span>Hướng dẫn chi tiết triển khai Bước 03 (Google Apps Script /exec)</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowGasGuide((v) => !v)}
+              className="text-xs font-semibold text-[#0F766E] hover:underline inline-flex items-center gap-1 cursor-pointer"
+            >
+              <span>{showGasGuide ? 'Thu gọn hướng dẫn' : 'Xem hướng dẫn từng bước'}</span>
+              {showGasGuide ? (
+                <ChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+            </button>
+          </div>
+
+          {showGasGuide && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-2 border-t border-slate-200 text-xs text-slate-700 leading-relaxed">
+              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2">
+                <p className="font-bold text-slate-900">
+                  Cách 1: Khắc phục lỗi khi chạy tự động
+                </p>
+                <ol className="list-decimal list-inside space-y-1.5">
+                  <li>
+                    Mở trang cài đặt người dùng:{' '}
+                    <a
+                      href="https://script.google.com/home/usersettings"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[#0F766E] font-medium hover:underline inline-flex items-center gap-0.5"
+                    >
+                      script.google.com/home/usersettings
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                    , kiểm tra góc phải xem có <strong>đúng tài khoản Gmail</strong> vừa đăng nhập HKDVN hay không rồi bật <strong>Google Apps Script API</strong> sang <strong>Bật (On)</strong>.
+                  </li>
+                  <li>
+                    Nếu bạn là quản trị dự án Google Cloud, kiểm tra API đã được bật tại{' '}
+                    <a
+                      href="https://console.cloud.google.com/apis/library/script.googleapis.com?project=gen-lang-client-0544945813"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[#0F766E] font-medium hover:underline inline-flex items-center gap-0.5"
+                    >
+                      Thư viện API Apps Script
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                    .
+                  </li>
+                  <li>
+                    Chờ <strong>2–3 phút</strong> để Google cập nhật trên hệ thống, sau đó bấm <strong>Đăng xuất</strong> rồi <strong>Đăng nhập bằng Google</strong> lại ở Bước 02 và bấm nút <strong>Thử lại Bước 03</strong> ở trên (không tạo trùng Google Sheet).
+                  </li>
+                </ol>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2">
+                <p className="font-bold text-slate-900">
+                  Cách 2: Dán mã thủ công từ Google Sheet (luôn thành công)
+                </p>
+                <ol className="list-decimal list-inside space-y-1.5">
+                  <li>
+                    Mở Google Sheet cửa hàng vừa tạo ở liên kết bên dưới (hoặc tìm tệp trong thư mục <span className="font-mono">QuanLyCuaHang_Data</span> trên Drive).
+                  </li>
+                  <li>
+                    Trên thanh công cụ Google Sheet, chọn <strong>Tiện ích mở rộng → Apps Script</strong>.
+                  </li>
+                  <li>
+                    Bấm nút <strong>Sao chép mã Code.gs</strong> ngay bên dưới, xóa hết mã mẫu trong trình soạn thảo, dán vào và bấm lưu (<strong>Ctrl + S</strong>).
+                  </li>
+                  <li>
+                    Chọn <strong>Triển khai → Tùy chọn triển khai mới → Ứng dụng web</strong>; mục <em>Thực thi với tư cách</em> chọn <strong>Tôi</strong>, mục <em>Ai có quyền truy cập</em> chọn <strong>Bất kỳ ai</strong> → bấm <strong>Triển khai</strong>.
+                  </li>
+                  <li>
+                    Sao chép đường dẫn ứng dụng web có đuôi <span className="font-mono">/exec</span>, dán vào ô nhập bên dưới và bấm <strong>Lưu đường dẫn</strong>.
+                  </li>
+                </ol>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Liên kết đã tạo & ô nhập đường dẫn Apps Script */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2 text-sm">
             <p className="font-semibold text-slate-900">Liên kết hạ tầng đã tạo</p>
@@ -798,7 +967,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
                   href={draft.infra.spreadsheetUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1.5 text-[#0F766E] hover:underline"
+                  className="flex items-center gap-1.5 text-[#0F766E] hover:underline font-medium"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   Mở Google Sheet dữ liệu cửa hàng
@@ -812,10 +981,10 @@ export const PortalView: React.FC<PortalViewProps> = ({
                   href={draft.infra.githubPagesUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-center gap-1.5 text-[#0F766E] hover:underline"
+                  className="flex items-center gap-1.5 text-[#0F766E] hover:underline font-medium"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
-                  Mở GitHub Pages: {draft.infra.githubPagesUrl}
+                  Mở trang cửa hàng GitHub Pages: {draft.infra.githubPagesUrl}
                 </a>
               ) : (
                 <p className="text-slate-500">GitHub Pages: chưa xuất bản</p>
@@ -826,15 +995,15 @@ export const PortalView: React.FC<PortalViewProps> = ({
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <label className="text-xs font-semibold text-slate-900">
-                Google Apps Script Endpoint (/exec)
+                Đường dẫn API Google Apps Script (/exec)
               </label>
               <button
                 type="button"
                 onClick={handleCopyGasCode}
-                className="text-xs font-medium text-[#0F766E] hover:underline inline-flex items-center gap-1"
+                className="text-xs font-medium text-[#0F766E] hover:underline inline-flex items-center gap-1 cursor-pointer"
               >
                 <Copy className="w-3 h-3" />
-                <span>{copiedCode ? 'Đã sao chép Code.gs' : 'Sao chép mã Code.gs'}</span>
+                <span>{copiedCode ? 'Đã sao chép mã Code.gs' : 'Sao chép mã Code.gs'}</span>
               </button>
             </div>
             <div className="flex gap-2">
@@ -848,9 +1017,9 @@ export const PortalView: React.FC<PortalViewProps> = ({
               <button
                 type="button"
                 onClick={handleSaveManualGasUrl}
-                className="px-3 py-2 min-h-[38px] bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg whitespace-nowrap"
+                className="px-3 py-2 min-h-[38px] bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg whitespace-nowrap cursor-pointer"
               >
-                Lưu URL
+                Lưu đường dẫn
               </button>
             </div>
           </div>
@@ -864,7 +1033,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
         affectedItems={
           affectedSummary.length > 0
             ? affectedSummary
-            : ['Lưu cấu hình hạ tầng vào bộ nhớ cục bộ IndexedDB']
+            : ['Lưu cấu hình hạ tầng vào bộ nhớ trình duyệt (IndexedDB)']
         }
         confirmLabel="Bắt đầu khởi tạo"
         onConfirm={runProvisioning}

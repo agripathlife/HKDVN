@@ -28,7 +28,15 @@ async function ghFetch<T>(path: string, token: string, init?: RequestInit): Prom
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
   if (!res.ok) {
-    throw new Error(data?.message || `GitHub API lỗi (${res.status})`);
+    const raw = String(data?.message || '');
+    const lower = raw.toLowerCase();
+    if (lower.includes('bad credentials') || res.status === 401) {
+      throw new Error('GitHub Token không hợp lệ hoặc đã hết hạn.');
+    }
+    if (lower.includes('not found') || res.status === 404) {
+      throw new Error('Không tìm thấy kho lưu trữ hoặc Token chưa được cấp quyền repo.');
+    }
+    throw new Error(raw ? `Lỗi GitHub API: ${raw}` : `Lỗi kết nối GitHub (${res.status})`);
   }
   return data as T;
 }
