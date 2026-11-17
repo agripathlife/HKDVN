@@ -249,6 +249,19 @@ export async function ensureSeededDB(): Promise<void> {
     for (const item of INITIAL_PRODUCTS) {
       store.put(item);
     }
+  } else {
+    const seedMap = new Map(INITIAL_PRODUCTS.map((item) => [item.id, item.imageUrl]));
+    for (const existing of existingProducts) {
+      const freshUrl = seedMap.get(existing.id);
+      if (
+        freshUrl &&
+        existing.imageUrl &&
+        !existing.imageUrl.startsWith('data:') &&
+        existing.imageUrl !== freshUrl
+      ) {
+        await putInStore(db, STORE_PRODUCTS, { ...existing, imageUrl: freshUrl });
+      }
+    }
   }
   const existingInvoices = await getAllFromStore<InvoiceRecord>(db, STORE_INVOICES);
   if (existingInvoices.length === 0) {
@@ -273,7 +286,7 @@ export async function ensureSeededDB(): Promise<void> {
           unit: 'Tô',
           qty: 1,
           note: 'Ít hành, thêm chanh',
-          imageUrl: '/src/assets/images/fnb_pho_bo_1794842004947.jpg',
+          imageUrl: phoImg,
         },
         {
           productId: 'sp-f3',
@@ -284,7 +297,7 @@ export async function ensureSeededDB(): Promise<void> {
           unit: 'Ly',
           qty: 1,
           note: 'Ít đá',
-          imageUrl: '/src/assets/images/fnb_tra_dao_cam_sa_1794842005902.jpg',
+          imageUrl: peachTeaImg,
         },
       ],
       totalAmount: 107000,

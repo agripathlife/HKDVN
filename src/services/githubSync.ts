@@ -91,13 +91,26 @@ async function imageUrlToWebpBase64(imageUrl: string): Promise<string | null> {
     const parts = imageUrl.split(',');
     return parts[1] || null;
   }
+  let objectUrl: string | null = null;
   try {
+    let srcToLoad = imageUrl;
+    try {
+      const resp = await fetch(imageUrl);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        objectUrl = URL.createObjectURL(blob);
+        srcToLoad = objectUrl;
+      }
+    } catch {
+      // Fallback to direct Image src load
+    }
+
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image();
       el.crossOrigin = 'anonymous';
       el.onload = () => resolve(el);
       el.onerror = () => reject(new Error('Không tải được ảnh nguồn'));
-      el.src = imageUrl;
+      el.src = srcToLoad;
     });
     const minSide = Math.min(img.width, img.height);
     const sx = Math.floor((img.width - minSide) / 2);
@@ -118,6 +131,10 @@ async function imageUrlToWebpBase64(imageUrl: string): Promise<string | null> {
     return dataUrl.split(',')[1] || null;
   } catch {
     return null;
+  } finally {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
   }
 }
 
@@ -158,10 +175,13 @@ export async function provisionGitHubStorefront(
 
   for (const p of products) {
     const safeSku = (p.sku || p.id).replace(/[^a-zA-Z0-9_-]/g, '') || p.id;
-    let finalRelativeUrl = p.imageUrl;
+    let finalRelativeUrl =
+      p.imageUrl && (p.imageUrl.startsWith('./assets/') || p.imageUrl.startsWith('https://'))
+        ? p.imageUrl
+        : '';
 
     let base64Img = p.imageWebpBase64 || convertedCache.get(p.imageUrl) || null;
-    if (!base64Img) {
+    if (!base64Img && p.imageUrl) {
       base64Img = await imageUrlToWebpBase64(p.imageUrl);
       if (base64Img) {
         convertedCache.set(p.imageUrl, base64Img);

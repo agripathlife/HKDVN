@@ -19,6 +19,7 @@ export enum TableStatus {
   EMPTY = 'empty',
   OCCUPIED = 'occupied',
   PAYMENT_REQUESTED = 'payment_requested',
+  SUPPORT_REQUESTED = 'support_requested',
 }
 
 export enum PaymentMethod {
@@ -63,6 +64,7 @@ export interface TableOrder {
   updatedAt: string;
   lastOrderId: string;
   paymentRequestedAt?: string;
+  supportNote?: string;
   unreadAlert?: boolean;
 }
 

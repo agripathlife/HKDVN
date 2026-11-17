@@ -230,9 +230,17 @@ export function generateAppsScriptCode(spreadsheetId: string): string {
   return `// HKDVN BYOB Backend - Tự động triển khai cho Google Sheets ID: ${spreadsheetId}
 const SHEET_ID = '${spreadsheetId}';
 
+function safeParseItems(raw) {
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    return [];
+  }
+}
+
 function doGet(e) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const action = (e && e.parameter && e.parameter.action) || 'poll';
   const since = (e && e.parameter && e.parameter.since) || '';
   const sheet = ss.getSheetByName('DonHienTai');
   const rows = sheet ? sheet.getDataRange().getValues() : [];
@@ -243,13 +251,14 @@ function doGet(e) {
     if (!r[0]) continue;
     const updatedAt = String(r[4] || '');
     if (updatedAt > latestUpdate) latestUpdate = updatedAt;
+    const lastOrderId = String(r[3] || '');
     orders.push({
       tableNumber: Number(r[0]),
-      status: String(r[1]),
+      status: String(r[1] || 'occupied'),
       totalAmount: Number(r[2] || 0),
-      lastOrderId: String(r[3] || ''),
+      lastOrderId: lastOrderId,
       updatedAt: updatedAt,
-      items: JSON.parse(r[5] || '[]')
+      items: safeParseItems(r[5])
     });
   }
   if (since && latestUpdate && since === latestUpdate) {
@@ -259,61 +268,99 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
-  const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-  const now = new Date().toISOString();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    const ss = SpreadsheetApp.openById(SHEET_ID);
+    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    const now = new Date().toISOString();
 
-  if (body.action === 'placeOrder' || body.action === 'requestPayment') {
-    const sheet = ss.getSheetByName('DonHienTai');
-    const rows = sheet.getDataRange().getValues();
-    let rowIndex = -1;
-    for (let i = 1; i < rows.length; i++) {
-      if (Number(rows[i][0]) === Number(body.tableNumber)) {
-        rowIndex = i + 1;
-        break;
-      }
-    }
-    const rowData = [
-      body.tableNumber,
-      body.status || 'occupied',
-      body.totalAmount || 0,
-      body.lastOrderId || '',
-      now,
-      JSON.stringify(body.items || [])
-    ];
-    if (rowIndex > 0) {
-      sheet.getRange(rowIndex, 1, 1, 6).setValues([rowData]);
-    } else {
-      sheet.appendRow(rowData);
-    }
-    return jsonOut({ ok: true, updatedAt: now });
-  }
-
-  if (body.action === 'recordInvoice') {
-    const revSheet = ss.getSheetByName('DoanhThu');
-    const detailSheet = ss.getSheetByName('ChiTietDonHang');
-    const inv = body.invoice;
-    revSheet.appendRow([
-      inv.id, inv.createdAt, inv.model, inv.customerOrTable,
-      inv.totalAmount, inv.totalCost, inv.profit, inv.paymentMethod,
-      JSON.stringify(inv.items || [])
-    ]);
-    (inv.items || []).forEach(function(item) {
-      detailSheet.appendRow([inv.id, inv.createdAt, item.sku, item.name, item.qty, item.price, item.note || '']);
-    });
-    if (body.clearTableNumber) {
-      const liveSheet = ss.getSheetByName('DonHienTai');
-      const rows = liveSheet.getDataRange().getValues();
-      for (let i = rows.length - 1; i >= 1; i--) {
-        if (Number(rows[i][0]) === Number(body.clearTableNumber)) {
-          liveSheet.deleteRow(i + 1);
+    if (
+      body.action === 'placeOrder' ||
+      body.action === 'requestPayment' ||
+      body.action === 'callSupport' ||
+      body.action === 'ackSupport'
+    ) {
+      const sheet = ss.getSheetByName('DonHienTai');
+      const rows = sheet.getDataRange().getValues();
+      let rowIndex = -1;
+      let existingRow = null;
+      for (let i = 1; i < rows.length; i++) {
+        if (Number(rows[i][0]) === Number(body.tableNumber)) {
+          rowIndex = i + 1;
+          existingRow = rows[i];
+          break;
         }
       }
-    }
-    return jsonOut({ ok: true });
-  }
 
-  return jsonOut({ ok: false, error: 'Unknown action' });
+      let nextItems = body.items;
+      let nextTotal = body.totalAmount;
+      if (existingRow && (body.action === 'callSupport' || body.action === 'ackSupport')) {
+        if (!Array.isArray(nextItems) || nextItems.length === 0) {
+          nextItems = safeParseItems(existingRow[5]);
+          nextTotal = Number(existingRow[2] || 0);
+        }
+      }
+
+      if (body.action === 'ackSupport' && (!nextItems || nextItems.length === 0)) {
+        if (rowIndex > 0) sheet.deleteRow(rowIndex);
+        return jsonOut({ ok: true, updatedAt: now });
+      }
+
+      const nextStatus =
+        body.action === 'ackSupport'
+          ? 'occupied'
+          : body.status ||
+            (body.action === 'requestPayment'
+              ? 'payment_requested'
+              : body.action === 'callSupport'
+                ? 'support_requested'
+                : 'occupied');
+
+      const rowData = [
+        body.tableNumber,
+        nextStatus,
+        nextTotal || 0,
+        body.lastOrderId || (existingRow ? existingRow[3] : ''),
+        now,
+        JSON.stringify(nextItems || [])
+      ];
+      if (rowIndex > 0) {
+        sheet.getRange(rowIndex, 1, 1, 6).setValues([rowData]);
+      } else {
+        sheet.appendRow(rowData);
+      }
+      return jsonOut({ ok: true, updatedAt: now });
+    }
+
+    if (body.action === 'recordInvoice') {
+      const revSheet = ss.getSheetByName('DoanhThu');
+      const detailSheet = ss.getSheetByName('ChiTietDonHang');
+      const inv = body.invoice;
+      revSheet.appendRow([
+        inv.id, inv.createdAt, inv.model, inv.customerOrTable,
+        inv.totalAmount, inv.totalCost, inv.profit, inv.paymentMethod,
+        JSON.stringify(inv.items || [])
+      ]);
+      (inv.items || []).forEach(function(item) {
+        detailSheet.appendRow([inv.id, inv.createdAt, item.sku, item.name, item.qty, item.price, item.note || '']);
+      });
+      if (body.clearTableNumber) {
+        const liveSheet = ss.getSheetByName('DonHienTai');
+        const rows = liveSheet.getDataRange().getValues();
+        for (let i = rows.length - 1; i >= 1; i--) {
+          if (Number(rows[i][0]) === Number(body.clearTableNumber)) {
+            liveSheet.deleteRow(i + 1);
+          }
+        }
+      }
+      return jsonOut({ ok: true });
+    }
+
+    return jsonOut({ ok: false, error: 'Unknown action' });
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function jsonOut(obj) {
