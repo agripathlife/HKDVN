@@ -4,7 +4,6 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { User } from 'firebase/auth';
 import {
   AppTab,
   BusinessModel,
@@ -32,7 +31,6 @@ import {
   saveTableOrder,
   subscribeSyncChannel,
 } from './utils/db';
-import { initGoogleAuth } from './services/googleWorkspace';
 import { GitHubUser, verifyGitHubToken } from './services/githubSync';
 import { TopBar } from './components/TopBar';
 import { PortalView } from './components/PortalView';
@@ -67,8 +65,6 @@ export default function App() {
   const [tableOrders, setTableOrders] = useState<TableOrder[]>([]);
   const [loaded, setLoaded] = useState(false);
 
-  const [googleUser, setGoogleUser] = useState<User | null>(null);
-  const [googleTokenReady, setGoogleTokenReady] = useState(false);
   const [githubToken, setGithubToken] = useState<string>('');
   const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
 
@@ -115,20 +111,9 @@ export default function App() {
     const unsubSync = subscribeSyncChannel(() => {
       refreshAll();
     });
-    const unsubAuth = initGoogleAuth(
-      (user, hasMemoryToken) => {
-        setGoogleUser(user);
-        setGoogleTokenReady(hasMemoryToken);
-      },
-      () => {
-        setGoogleUser(null);
-        setGoogleTokenReady(false);
-      }
-    );
     return () => {
       active = false;
       unsubSync();
-      unsubAuth();
     };
   }, [refreshAll]);
 
@@ -209,13 +194,9 @@ export default function App() {
           <PortalView
             config={config}
             products={products}
-            googleUser={googleUser}
-            googleTokenReady={googleTokenReady}
             githubToken={githubToken}
             githubUser={githubUser}
             onUpdateConfig={handleUpdateConfig}
-            onGoogleAuthChange={setGoogleUser}
-            onGoogleTokenReadyChange={setGoogleTokenReady}
             onGitHubAuthChange={(token, user) => {
               setGithubToken(token);
               setGithubUser(user);
