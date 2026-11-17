@@ -403,3 +403,24 @@ export async function clearTableOrder(tableNumber: number): Promise<void> {
   await deleteFromStore(db, STORE_TABLES, tableNumber);
   broadcastUpdate('tables');
 }
+
+export async function loadGitHubToken(): Promise<string> {
+  const db = await openDB();
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE_KV, 'readonly');
+    const req = tx.objectStore(STORE_KV).get('githubToken');
+    req.onsuccess = () => resolve(typeof req.result === 'string' ? req.result : '');
+    req.onerror = () => resolve('');
+  });
+}
+
+export async function saveGitHubToken(token: string): Promise<void> {
+  const db = await openDB();
+  await putKV(db, 'githubToken', token);
+}
+
+export async function clearGitHubToken(): Promise<void> {
+  const db = await openDB();
+  await deleteFromStore(db, STORE_KV, 'githubToken');
+}
+

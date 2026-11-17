@@ -16,13 +16,16 @@ import {
   TableOrder,
 } from './types';
 import {
+  clearGitHubToken,
   clearTableOrder,
   DEFAULT_CONFIG,
+  loadGitHubToken,
   loadInvoices,
   loadProducts,
   loadShopConfig,
   loadTableOrders,
   removeProduct,
+  saveGitHubToken,
   saveInvoice,
   saveProduct,
   saveShopConfig,
@@ -30,7 +33,7 @@ import {
   subscribeSyncChannel,
 } from './utils/db';
 import { initGoogleAuth } from './services/googleWorkspace';
-import { GitHubUser } from './services/githubSync';
+import { GitHubUser, verifyGitHubToken } from './services/githubSync';
 import { TopBar } from './components/TopBar';
 import { PortalView } from './components/PortalView';
 import { StorefrontView } from './components/StorefrontView';
@@ -65,6 +68,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
 
   const [googleUser, setGoogleUser] = useState<User | null>(null);
+  const [googleTokenReady, setGoogleTokenReady] = useState(false);
   const [githubToken, setGithubToken] = useState<string>('');
   const [githubUser, setGithubUser] = useState<GitHubUser | null>(null);
 
@@ -89,15 +93,40 @@ export default function App() {
   }, [initialBan]);
 
   useEffect(() => {
+    let active = true;
     refreshAll();
+
+    loadGitHubToken().then(async (savedToken) => {
+      if (!active || !savedToken) return;
+      setGithubToken(savedToken);
+      try {
+        const user = await verifyGitHubToken(savedToken);
+        if (active) setGithubUser(user);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message.toLowerCase() : '';
+        if (active && (msg.includes('không hợp lệ') || msg.includes('hết hạn'))) {
+          await clearGitHubToken();
+          setGithubToken('');
+          setGithubUser(null);
+        }
+      }
+    });
+
     const unsubSync = subscribeSyncChannel(() => {
       refreshAll();
     });
     const unsubAuth = initGoogleAuth(
-      (user) => setGoogleUser(user),
-      () => setGoogleUser(null)
+      (user, hasMemoryToken) => {
+        setGoogleUser(user);
+        setGoogleTokenReady(hasMemoryToken);
+      },
+      () => {
+        setGoogleUser(null);
+        setGoogleTokenReady(false);
+      }
     );
     return () => {
+      active = false;
       unsubSync();
       unsubAuth();
     };
@@ -181,13 +210,20 @@ export default function App() {
             config={config}
             products={products}
             googleUser={googleUser}
+            googleTokenReady={googleTokenReady}
             githubToken={githubToken}
             githubUser={githubUser}
             onUpdateConfig={handleUpdateConfig}
             onGoogleAuthChange={setGoogleUser}
+            onGoogleTokenReadyChange={setGoogleTokenReady}
             onGitHubAuthChange={(token, user) => {
               setGithubToken(token);
               setGithubUser(user);
+              if (token) {
+                void saveGitHubToken(token);
+              } else {
+                void clearGitHubToken();
+              }
             }}
             onOpenStorefront={() => setActiveTab(AppTab.STOREFRONT)}
             onOpenOperations={() => setActiveTab(AppTab.OPERATIONS)}

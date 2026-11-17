@@ -436,7 +436,21 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
       var posCart = [];
       var tableOrders = [];
       var invoices = JSON.parse(localStorage.getItem('hkdvn_tenant_invoices') || '[]');
+      var ghStorageKey = 'hkdvn_tenant_gh_token_' + location.pathname;
       var ghToken = '';
+      try {
+        var hashParams = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+        var transferredToken = hashParams.get('gh_token');
+        if (transferredToken) {
+          ghToken = transferredToken.trim();
+          localStorage.setItem(ghStorageKey, ghToken);
+          history.replaceState(null, '', location.pathname + location.search);
+        } else {
+          ghToken = localStorage.getItem(ghStorageKey) || '';
+        }
+      } catch (e) {
+        ghToken = localStorage.getItem(ghStorageKey) || '';
+      }
       var compressedImg = null;
       var pollTimer = null;
       var lastSnapshot = {};
@@ -645,7 +659,12 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
           root.innerHTML = '<div class="grid grid-cols-1 lg:grid-cols-12 gap-6">' +
             '<form id="prod-form" class="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-5 space-y-3">' +
             '<h2 class="text-base font-bold">Thêm sản phẩm &amp; Nén ảnh WebP</h2>' +
+            '<div class="space-y-1.5">' +
             '<input id="gh-pat" type="password" value="' + esc(ghToken) + '" placeholder="GitHub Token (quyền repo) để lưu lên GitHub" class="w-full px-3 py-2 text-xs font-mono border border-slate-200 rounded-lg" />' +
+            '<div class="flex items-center justify-between text-[11px]">' +
+            '<span id="gh-token-status" class="' + (ghToken ? 'text-emerald-700 font-medium' : 'text-slate-500') + '">' + (ghToken ? 'Đã lưu GitHub Token cục bộ trên trình duyệt máy này' : 'Chưa có GitHub Token cục bộ') + '</span>' +
+            (ghToken ? '<button id="btn-clear-gh" type="button" class="text-red-700 hover:underline font-medium">Xóa token khỏi máy</button>' : '') +
+            '</div></div>' +
             '<div class="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between"><span class="text-xs font-medium">Ảnh WebP 800×800</span><input id="img-file" type="file" accept="image/*" capture="environment" class="text-xs w-44" /></div>' +
             '<p id="img-info" class="text-xs text-emerald-700"></p>' +
             '<input id="p-name" required placeholder="Tên sản phẩm / món" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />' +
@@ -665,7 +684,24 @@ export function buildTenantAdminHTML(config: ShopConfig): string {
                 '<button data-del="' + esc(p.id) + '" class="text-xs text-red-700 font-semibold">Xóa</button></div>';
             }).join('') + '</div></div>';
 
-          document.getElementById('gh-pat').oninput = function (e) { ghToken = e.target.value.trim(); };
+          document.getElementById('gh-pat').oninput = function (e) {
+            ghToken = e.target.value.trim();
+            if (ghToken) localStorage.setItem(ghStorageKey, ghToken);
+            else localStorage.removeItem(ghStorageKey);
+            var st = document.getElementById('gh-token-status');
+            if (st) {
+              st.className = ghToken ? 'text-emerald-700 font-medium' : 'text-slate-500';
+              st.textContent = ghToken ? 'Đã lưu GitHub Token cục bộ trên trình duyệt máy này' : 'Chưa có GitHub Token cục bộ';
+            }
+          };
+          var clrBtn = document.getElementById('btn-clear-gh');
+          if (clrBtn) {
+            clrBtn.onclick = function () {
+              ghToken = '';
+              localStorage.removeItem(ghStorageKey);
+              render();
+            };
+          }
           document.getElementById('img-file').onchange = async function (e) {
             if (!e.target.files[0]) return;
             compressedImg = await compressToWebP(e.target.files[0]);

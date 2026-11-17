@@ -35,27 +35,29 @@ let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 
 export const initGoogleAuth = (
-  onAuthSuccess?: (user: User, token: string) => void,
-  onAuthFailure?: () => void
+  onAuthSuccess?: (user: User, hasMemoryToken: boolean) => void,
+  onSignedOut?: () => void
 ) => {
   return onAuthStateChanged(auth, (user: User | null) => {
     if (user) {
-      if (cachedAccessToken) {
-        onAuthSuccess?.(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        cachedAccessToken = null;
-        onAuthFailure?.();
-      }
+      onAuthSuccess?.(user, Boolean(cachedAccessToken));
     } else {
       cachedAccessToken = null;
-      onAuthFailure?.();
+      onSignedOut?.();
     }
   });
 };
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string }> => {
+export const googleSignIn = async (
+  emailHint?: string | null
+): Promise<{ user: User; accessToken: string }> => {
   try {
     isSigningIn = true;
+    if (emailHint) {
+      provider.setCustomParameters({ login_hint: emailHint });
+    } else {
+      provider.setCustomParameters({});
+    }
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { User } from 'firebase/auth';
 import {
   CheckCircle2,
@@ -41,10 +41,12 @@ interface PortalViewProps {
   config: ShopConfig;
   products: ProductItem[];
   googleUser: User | null;
+  googleTokenReady: boolean;
   githubToken: string;
   githubUser: GitHubUser | null;
   onUpdateConfig: (next: ShopConfig) => Promise<void>;
   onGoogleAuthChange: (user: User | null) => void;
+  onGoogleTokenReadyChange: (ready: boolean) => void;
   onGitHubAuthChange: (token: string, user: GitHubUser | null) => void;
   onOpenStorefront: () => void;
   onOpenOperations: () => void;
@@ -61,10 +63,12 @@ export const PortalView: React.FC<PortalViewProps> = ({
   config,
   products,
   googleUser,
+  googleTokenReady,
   githubToken,
   githubUser,
   onUpdateConfig,
   onGoogleAuthChange,
+  onGoogleTokenReadyChange,
   onGitHubAuthChange,
   onOpenStorefront,
   onOpenOperations,
@@ -73,10 +77,12 @@ export const PortalView: React.FC<PortalViewProps> = ({
   const [patInput, setPatInput] = useState(githubToken);
   const [repoName, setRepoName] = useState(config.infra.githubRepo || 'hkdvn-shop');
   const [authError, setAuthError] = useState<string | null>(null);
+  const [refreshingGoogle, setRefreshingGoogle] = useState(false);
   const [ghError, setGhError] = useState<string | null>(null);
   const [verifyingGh, setVerifyingGh] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [transferGhToken, setTransferGhToken] = useState(true);
 
   const [confirmProvisionOpen, setConfirmProvisionOpen] = useState(false);
   const [isProvisioning, setIsProvisioning] = useState(false);
@@ -90,6 +96,10 @@ export const PortalView: React.FC<PortalViewProps> = ({
   ]);
   const [manualGasInput, setManualGasInput] = useState(config.infra.gasEndpointUrl || '');
   const [copiedCode, setCopiedCode] = useState(false);
+
+  useEffect(() => {
+    setPatInput(githubToken);
+  }, [githubToken]);
 
   const handleSelectModel = async (model: BusinessModel) => {
     const next = { ...draft, model };
@@ -109,22 +119,27 @@ export const PortalView: React.FC<PortalViewProps> = ({
     }
   };
 
-  const handleGoogleLogin = async () => {
+  const handleGoogleLogin = async (emailHint?: string | null) => {
     setAuthError(null);
+    setRefreshingGoogle(true);
     try {
-      const res = await googleSignIn();
+      const res = await googleSignIn(emailHint);
       onGoogleAuthChange(res.user);
+      onGoogleTokenReadyChange(true);
     } catch (err) {
       setAuthError(
         err instanceof Error
           ? err.message
           : 'Không thể đăng nhập Google. Vui lòng cho phép cửa sổ bật lên trên trình duyệt.'
       );
+    } finally {
+      setRefreshingGoogle(false);
     }
   };
 
   const handleGoogleSignOut = async () => {
     await googleLogout();
+    onGoogleTokenReadyChange(false);
     onGoogleAuthChange(null);
   };
 
@@ -350,16 +365,23 @@ export const PortalView: React.FC<PortalViewProps> = ({
   };
 
   const affectedSummary: string[] = [];
-  if (googleUser && getGoogleAccessToken()) {
+  if (googleUser && (googleTokenReady || getGoogleAccessToken())) {
     affectedSummary.push('Tạo thư mục "QuanLyCuaHang_Data" trên Google Drive của bạn');
     affectedSummary.push('Tạo Google Sheet gồm 5 bảng dữ liệu doanh thu và đơn hàng');
     affectedSummary.push('Triển khai Google Apps Script Web App gắn với bảng tính vừa tạo');
   }
   if (githubUser && githubToken) {
     affectedSummary.push(
-      `Tạo hoặc cập nhật kho lưu trữ GitHub "${githubUser.login}/${repoName}" với config.json, products.json, index.html và bật GitHub Pages`
+      `Tạo hoặc cập nhật kho lưu trữ GitHub "${githubUser.login}/${repoName}" với config.json, products.json, index.html, admin.html và bật GitHub Pages`
     );
   }
+
+  const tenantAdminHref =
+    draft.infra.githubPagesUrl
+      ? transferGhToken && githubToken
+        ? `${draft.infra.githubPagesUrl}admin.html#gh_token=${encodeURIComponent(githubToken)}`
+        : `${draft.infra.githubPagesUrl}admin.html`
+      : '';
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-12">
@@ -532,28 +554,56 @@ export const PortalView: React.FC<PortalViewProps> = ({
               <span className="text-xs text-slate-500">Drive · Sheets · Apps Script</span>
             </div>
 
-            {googleUser && getGoogleAccessToken() ? (
-              <div className="flex items-center justify-between gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-900 truncate">
-                    {googleUser.displayName || 'Tài khoản Google'}
-                  </p>
-                  <p className="text-xs text-slate-500 truncate">{googleUser.email}</p>
+            {googleUser ? (
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 truncate">
+                      {googleUser.displayName || 'Tài khoản Google'}
+                    </p>
+                    <p className="text-xs text-slate-500 truncate">{googleUser.email}</p>
+                    <p
+                      className={`text-[11px] mt-0.5 font-medium ${
+                        googleTokenReady ? 'text-emerald-700' : 'text-amber-700'
+                      }`}
+                    >
+                      {googleTokenReady
+                        ? 'Đã kết nối đầy đủ Drive · Sheets · Apps Script'
+                        : 'Đã ghi nhớ tài khoản · Bấm Làm mới 1 chạm để cấp lại quyền Drive/Sheets'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {!googleTokenReady && (
+                      <button
+                        type="button"
+                        disabled={refreshingGoogle}
+                        onClick={() => handleGoogleLogin(googleUser.email)}
+                        className="px-3 py-2 min-h-[38px] text-xs font-semibold text-white bg-[#0F766E] hover:bg-[#0D655E] rounded-lg inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <RefreshCw
+                          className={`w-3.5 h-3.5 ${refreshingGoogle ? 'animate-spin' : ''}`}
+                        />
+                        <span>{refreshingGoogle ? 'Đang mở...' : 'Làm mới 1 chạm'}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleGoogleSignOut}
+                      className="px-3 py-2 min-h-[38px] text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Đăng xuất</span>
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleGoogleSignOut}
-                  className="px-3 py-2 min-h-[40px] text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Đăng xuất</span>
-                </button>
+                {authError && <p className="text-xs text-red-700">{authError}</p>}
               </div>
             ) : (
               <div>
                 <button
                   type="button"
-                  onClick={handleGoogleLogin}
+                  disabled={refreshingGoogle}
+                  onClick={() => handleGoogleLogin()}
                   className="gsi-material-button w-full"
                 >
                   <div className="gsi-material-button-state" />
@@ -624,31 +674,50 @@ export const PortalView: React.FC<PortalViewProps> = ({
               </button>
             </div>
 
-            {githubUser && (
-              <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <img
-                    src={githubUser.avatar_url}
-                    alt={githubUser.login}
-                    referrerPolicy="no-referrer"
-                    className="w-7 h-7 rounded-full border border-slate-200"
-                  />
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-slate-900 truncate">
-                      @{githubUser.login}
-                    </p>
-                    <p className="text-[11px] text-emerald-700">Đã xác thực quyền GitHub</p>
+            {(githubUser || githubToken) && (
+              <div className="flex items-center justify-between gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                {githubUser ? (
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <img
+                      src={githubUser.avatar_url}
+                      alt={githubUser.login}
+                      referrerPolicy="no-referrer"
+                      className="w-7 h-7 rounded-full border border-slate-200"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-900 truncate">
+                        @{githubUser.login}
+                      </p>
+                      <p className="text-[11px] text-emerald-700">Đã lưu cục bộ trên máy này</p>
+                    </div>
                   </div>
+                ) : (
+                  <p className="text-xs text-slate-600 truncate">Đã lưu Token GitHub cục bộ</p>
+                )}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <input
+                    type="text"
+                    value={repoName}
+                    onChange={(e) => setRepoName(e.target.value)}
+                    aria-label="Tên kho lưu trữ GitHub"
+                    className="w-28 px-2.5 py-1 text-xs font-mono border border-slate-200 rounded-md bg-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPatInput('');
+                      onGitHubAuthChange('', null);
+                    }}
+                    className="px-2.5 py-1 text-[11px] font-medium text-red-700 bg-white border border-slate-200 hover:bg-red-50 rounded-md cursor-pointer"
+                  >
+                    Xóa token
+                  </button>
                 </div>
-                <input
-                  type="text"
-                  value={repoName}
-                  onChange={(e) => setRepoName(e.target.value)}
-                  aria-label="Tên kho lưu trữ GitHub"
-                  className="w-32 px-2.5 py-1 text-xs font-mono border border-slate-200 rounded-md bg-white"
-                />
               </div>
             )}
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Token GitHub được lưu cục bộ trên trình duyệt máy này (IndexedDB) để không phải nhập lại sau khi tải lại trang.
+            </p>
             {ghError && <p className="text-xs text-red-700">{ghError}</p>}
           </div>
         </div>
@@ -977,17 +1046,30 @@ export const PortalView: React.FC<PortalViewProps> = ({
         {/* Liên kết đã tạo & ô nhập đường dẫn Apps Script */}
         {draft.infra.githubPagesUrl && (
           <div className="p-5 bg-teal-50/70 border border-[#0F766E]/30 rounded-2xl flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div>
+            <div className="space-y-2">
               <p className="text-sm font-bold text-slate-900">
                 Gian hàng mới đã sẵn sàng &amp; hoạt động độc lập khỏi Cổng khởi tạo
               </p>
-              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+              <p className="text-xs text-slate-600 leading-relaxed">
                 Từ bây giờ, chủ quán vận hành trực tiếp trên trang quản lý của gian hàng mới (lần đầu GitHub Pages cần 30–60 giây để xuất bản). Toàn bộ ảnh sản phẩm đã được tải vào thư mục <span className="font-mono">/assets/img/</span> của kho lưu trữ riêng.
               </p>
+              {githubToken && (
+                <label className="inline-flex items-center gap-2 text-xs text-slate-800 font-medium cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={transferGhToken}
+                    onChange={(e) => setTransferGhToken(e.target.checked)}
+                    className="w-4 h-4 accent-[#0F766E] rounded"
+                  />
+                  <span>
+                    Tự động chuyển giao GitHub Token sang trang quản lý mới (tự lưu cục bộ trên máy &amp; tự xóa khỏi thanh địa chỉ)
+                  </span>
+                </label>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2.5 shrink-0">
               <a
-                href={`${draft.infra.githubPagesUrl}admin.html`}
+                href={tenantAdminHref}
                 target="_blank"
                 rel="noreferrer"
                 className="px-4 py-2.5 min-h-[42px] bg-[#0F766E] hover:bg-[#0D655E] text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap"
@@ -1028,7 +1110,7 @@ export const PortalView: React.FC<PortalViewProps> = ({
 
               {draft.infra.githubPagesUrl ? (
                 <a
-                  href={`${draft.infra.githubPagesUrl}admin.html`}
+                  href={tenantAdminHref}
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center gap-1.5 text-[#0F766E] hover:underline font-medium"
